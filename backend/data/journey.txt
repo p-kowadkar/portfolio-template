@@ -1,0 +1,81 @@
+# [YOUR NAME]'s Journey -- Placeholder File
+#
+# ---------------------------------------------------------------------------
+# HOW TO USE THIS FILE
+# ---------------------------------------------------------------------------
+# This file is ingested by the RAG backend (backend/main.py) and used to
+# answer questions about you inside the AI Guide chat assistant.
+#
+# Replace the sections below with your own story. The more vivid and specific
+# you are, the better the AI will answer questions about you. Write in first
+# person, narrative style -- this is your voice, not a resume.
+#
+# Suggested sections (customize freely):
+#
+#   ## Early Life & Origin Story
+#   Where did you grow up? What were you obsessed with as a kid?
+#   What made you want to go into tech / engineering / your field?
+#
+#   ## Education
+#   Where did you study? What did you build or discover there?
+#   Any turning-point moments, competitions, side projects?
+#
+#   ## Career Timeline
+#   Walk through each role: what you did, what you learned, the human story
+#   behind the job title. Include dates, companies, and memorable moments.
+#
+#   ## Key Projects
+#   Deep-dives on your most impressive or meaningful work.
+#   What was the problem? What did you build? What was the impact?
+#
+#   ## Fun Facts / Personal Side
+#   Hobbies, quirks, things that make you YOU. Recruiters remember people,
+#   not resumes. Give them something to remember.
+#
+#   ## What You're Building Now
+#   Current projects, research, or side hustles.
+#
+#   ## Contact
+#   Preferred way for people to reach you.
+#
+# ---------------------------------------------------------------------------
+# TIP: The backend chunks this file and embeds it into a vector store.
+# Longer, more detailed content = better RAG retrieval = smarter AI answers.
+# Aim for at least 500-1000 words across all sections.
+# ---------------------------------------------------------------------------
+
+## Early Life & Origin Story
+
+[Replace this with your own story -- where you grew up, what you were obsessed
+with as a kid, and what sparked your interest in your field. The more specific
+and personal, the better the AI guide will represent you.]
+
+## Education
+
+[Your degree(s), institution(s), years. Include projects, competitions,
+teaching experiences, or anything beyond the transcript that shaped you.]
+
+## Career Timeline
+
+[Walk through your work history chronologically. Include company names, roles,
+dates, and a human anecdote or two per role -- not just bullet points.]
+
+## Key Projects
+
+[2-5 projects you're proud of. What was the problem? How did you build it?
+What was the result? Include tech stack, impact metrics if you have them,
+and links if public.]
+
+## Fun Facts
+
+[3-5 personal details that make you memorable. Hobbies, side quests,
+unexpected skills, travel, etc.]
+
+## What I'm Building Now
+
+[Your current focus -- job, research, side project, whatever is most relevant
+for visitors to know about right now.]
+
+## Contact
+
+[Your preferred contact: email, LinkedIn, GitHub, etc.]

@@ -1,0 +1,330 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================
+   DESIGN SYSTEM: Netflix-Dark × macOS Desktop
+   Philosophy: Cinematic darkness, surgical precision, red fire
+   ============================================================ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+:root {
+  /* Netflix × macOS palette — Dark (default) */
+  --pk-bg: #141414;
+  --pk-surface: #1c1c1e;
+  --pk-surface2: #242426;
+  --pk-surface3: #2c2c2e;
+  --pk-border: rgba(255, 255, 255, 0.08);
+  --pk-border-bright: rgba(255, 255, 255, 0.15);
+  --pk-accent: #E50914;
+  --pk-accent-dim: rgba(229, 9, 20, 0.12);
+  --pk-accent-glow: rgba(229, 9, 20, 0.25);
+  --pk-text: #f0f0f2;
+  --pk-text-secondary: rgba(240, 240, 242, 0.55);
+  --pk-muted: #8e8e93;
+  --pk-subtle: #48484a;
+  --pk-dock-bg: rgba(28, 28, 30, 0.75);
+  --pk-window-bg: rgba(26, 26, 28, 0.97);
+  --pk-window-title: #2a2a2c;
+  --pk-menubar-bg: rgba(20, 20, 22, 0.82);
+  --pk-dropdown-bg: rgba(32, 32, 34, 0.97);
+  --pk-notif-bg: rgba(30, 30, 32, 0.96);
+  --pk-green: #30d158;
+  --pk-yellow: #ffd60a;
+  --pk-traffic-red: #ff453a;
+  --pk-traffic-yellow: #ffd60a;
+  --pk-traffic-green: #30d158;
+  --pk-is-light: 0;
+
+  /* Shadcn compatibility */
+  --radius: 0.75rem;
+  --background: var(--pk-bg);
+  --foreground: var(--pk-text);
+  --card: var(--pk-surface);
+  --card-foreground: var(--pk-text);
+  --popover: var(--pk-surface2);
+  --popover-foreground: var(--pk-text);
+  --primary: var(--pk-accent);
+  --primary-foreground: #ffffff;
+  --secondary: var(--pk-surface2);
+  --secondary-foreground: var(--pk-text);
+  --muted: var(--pk-surface3);
+  --muted-foreground: var(--pk-muted);
+  --accent: var(--pk-surface3);
+  --accent-foreground: var(--pk-text);
+  --destructive: var(--pk-accent);
+  --border: var(--pk-border);
+  --input: var(--pk-surface2);
+  --ring: var(--pk-accent);
+}
+
+/* ============================================================
+   LIGHT MODE OVERRIDES
+   ============================================================ */
+.light {
+  --pk-bg: #F5F0E8;
+  --pk-surface: #EDE8DF;
+  --pk-surface2: #E4DDD3;
+  --pk-surface3: #D8D0C6;
+  --pk-border: rgba(100, 60, 40, 0.12);
+  --pk-border-bright: rgba(100, 60, 40, 0.22);
+  --pk-text: #1C1410;
+  --pk-text-secondary: rgba(28, 20, 16, 0.55);
+  --pk-muted: #7A6A5A;
+  --pk-subtle: #B0A090;
+  --pk-dock-bg: rgba(220, 210, 195, 0.82);
+  --pk-window-bg: rgba(245, 240, 232, 0.97);
+  --pk-window-title: #DDD5C8;
+  --pk-menubar-bg: rgba(235, 228, 218, 0.90);
+  --pk-dropdown-bg: rgba(240, 234, 225, 0.98);
+  --pk-notif-bg: rgba(238, 232, 222, 0.98);
+  --pk-is-light: 1;
+  --background: var(--pk-bg);
+  --foreground: var(--pk-text);
+  --card: var(--pk-surface);
+  --card-foreground: var(--pk-text);
+  --popover: var(--pk-surface2);
+  --popover-foreground: var(--pk-text);
+  --muted: var(--pk-surface3);
+  --muted-foreground: var(--pk-muted);
+  --border: var(--pk-border);
+  --input: var(--pk-surface2);
+}
+
+/* ============================================================
+   BASE RESETS
+   ============================================================ */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--pk-bg);
+    color: var(--pk-text);
+    font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    user-select: none;
+  }
+
+  h1, h2, h3 {
+    font-family: 'DM Serif Display', Georgia, serif;
+  }
+
+  code, .mono, pre {
+    font-family: 'DM Mono', 'SF Mono', monospace;
+  }
+
+  /* Allow text selection inside windows */
+  .window-content, .window-content * {
+    user-select: text;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
+
+/* ============================================================
+   DESKTOP NOISE OVERLAY
+   ============================================================ */
+.desktop-noise::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.025;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ============================================================
+   SCROLLBAR STYLING
+   ============================================================ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--pk-accent);
+  border-radius: 3px;
+  opacity: 0.6;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--pk-accent);
+  opacity: 1;
+}
+
+/* ============================================================
+   WINDOW DRAG HANDLE
+   ============================================================ */
+.window-drag-handle {
+  cursor: grab;
+}
+.window-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* ============================================================
+   CHAT BUBBLE ANIMATIONS
+   ============================================================ */
+@keyframes typing-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-6px); opacity: 1; }
+}
+
+.typing-dot {
+  animation: typing-bounce 1.4s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* ============================================================
+   ACHIEVEMENT WIDGET SHIMMER
+   ============================================================ */
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.achievement-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--pk-accent) 0%,
+    #ff6b6b 50%,
+    var(--pk-accent) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 3s linear infinite;
+}
+
+/* ============================================================
+   DOCK TOOLTIP
+   ============================================================ */
+.dock-tooltip {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 20, 0.95);
+  border: 1px solid var(--pk-border-bright);
+  color: var(--pk-text);
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+
+/* ============================================================
+   WINDOW GLASS EFFECT
+   ============================================================ */
+.window-glass {
+  background: rgba(28, 28, 30, 0.92);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+}
+
+/* ============================================================
+   MENU BAR
+   ============================================================ */
+.menubar {
+  background: rgba(20, 20, 20, 0.85);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+/* ============================================================
+   PROJECT LIST ITEM HOVER
+   ============================================================ */
+.project-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ============================================================
+   PULSING RING ANIMATION (VideoCall)
+   ============================================================ */
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+.pulse-ring {
+  animation: pulse-ring 2s ease-out infinite;
+}
+.pulse-ring-delay {
+  animation: pulse-ring 2s ease-out infinite 0.6s;
+}
+
+/* ============================================================
+   EXPERIENCE TIMELINE
+   ============================================================ */
+.timeline-line {
+  background: linear-gradient(to bottom, var(--pk-accent), transparent);
+}
+
+/* ============================================================
+   LINK HOVER UNDERLINE
+   ============================================================ */
+.link-hover {
+  position: relative;
+}
+.link-hover::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 0;
+  height: 1px;
+  background: var(--pk-accent);
+  transition: width 0.2s ease;
+}
+.link-hover:hover::after {
+  width: 100%;
+}

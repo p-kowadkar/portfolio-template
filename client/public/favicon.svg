@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <style>
+    text {
+      font-family: Arial, sans-serif;
+      font-size: 75px;
+      font-style: italic;
+      font-weight: bold;
+      fill: #800000;
+    }
+    .circle1, .circle2, .circle3 {
+      fill: none;
+      stroke: #800000;
+      stroke-width: 1.5;
+      stroke-dasharray: 5,3;
+      opacity: 0.7;
+    }
+    .circle1 {
+      stroke-width: 2;
+    }
+  </style>
+  <!-- Rough circular elements -->
+  <circle class="circle1" cx="50" cy="50" r="45" />
+  <circle class="circle2" cx="50" cy="50" r="38" />
+  <circle class="circle3" cx="50" cy="50" r="32" />
+  <!-- Larger pk text -->
+  <text x="50%" y="65%" text-anchor="middle">pk</text>
+</svg>

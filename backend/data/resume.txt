@@ -1,0 +1,57 @@
+[YOUR FULL NAME]
+[Your title(s) — e.g. AI Engineer / Data Scientist / Full-Stack Developer]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HOW TO USE THIS FILE
+# ─────────────────────────────────────────────────────────────────────────────
+# This file is ingested by the RAG backend alongside journey.txt and used by
+# the Pai chat assistant to answer questions about your skills and experience.
+#
+# Paste your resume content below in plain text. The backend will chunk and
+# embed it automatically — no special formatting required, but clearly labeled
+# sections help retrieval quality.
+#
+# Recommended sections:
+#   SUMMARY, CONTACT INFORMATION, EDUCATION, TECHNICAL SKILLS,
+#   WORK EXPERIENCE, PROJECTS, ACHIEVEMENTS
+#
+# Remove this comment block when you add your real content.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SUMMARY
+[2-4 sentences summarizing your expertise, years of experience, and the
+kinds of problems you solve. This is what Pai will lead with when asked
+"what does [name] do?".]
+
+CONTACT INFORMATION
+Email: [your-email@example.com]
+LinkedIn: linkedin.com/in/[your-handle]
+GitHub: github.com/[your-handle]
+Location: [City, State / Country]
+
+EDUCATION
+[Degree] from [University], [City, State] — [Year]
+[Degree] from [University], [City, State] — [Year]
+
+TECHNICAL SKILLS
+[List your key technologies, frameworks, languages, tools, and platforms.
+Group them by category if helpful — e.g. Languages, AI/ML, Cloud, DevOps.]
+
+WORK EXPERIENCE
+[Company Name] — [Role] ([Start Year] – [End Year or Present])
+- [Key achievement or responsibility with a metric if possible]
+- [Key achievement or responsibility]
+- [Key achievement or responsibility]
+
+[Repeat for each role, most recent first]
+
+PROJECTS
+[Project Name] — [One-line description]
+Tech: [Stack]
+Impact: [Metric or outcome]
+Link: [GitHub / demo URL if public]
+
+[Repeat for 2-5 projects]
+
+ACHIEVEMENTS
+[Award / Hackathon win / Publication / Speaking engagement — with date and context]
