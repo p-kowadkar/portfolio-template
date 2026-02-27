@@ -2,7 +2,7 @@
 
 > **An interactive portfolio designed as a fully functional operating system experience.** Desktop visitors get a macOS-inspired environment; mobile visitors get an iOS springboard. Both share the same underlying data and AI backbone.
 
-This is the **public template** of [Pranav Kowadkar's portfolio](https://www.pkowadkar.com). All personal data (resume, journey, profile images) has been replaced with clearly labeled placeholders so you can fork this and make it your own in ~20 minutes.
+This is the **public template** of [Pranav Kowadkar's portfolio](https://www.pkowadkar.com). All personal data (resume, journey, profile images) has been replaced with clearly labeled placeholders so you can fork this and make it your own in ~30–45 minutes.
 
 **Live demo:** [www.pkowadkar.com](https://www.pkowadkar.com)
 
@@ -41,7 +41,7 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 
 | Feature | Description |
 |---|---|
-| **Boot Intro** | Click-to-enter gate with `pk` monogram, boot sound (user-gesture triggered), and dissolve animation |
+| **Boot Intro** | Click-to-enter gate with `pk` monogram (edit for your initials), boot sound (user-gesture triggered), and dissolve animation |
 | **macOS Menu Bar** | Live clock, wallpaper switcher, notification ticker for achievements |
 | **Draggable Windows** | All apps open as resizable, draggable macOS-style windows via `react-rnd` |
 | **Auto-hiding Dock** | Magnification effect on hover, opens apps on click |
@@ -52,7 +52,7 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 
 | Feature | Description |
 |---|---|
-| **iOS Intro** | Short `pk` flash (~1.5s) then springboard |
+| **iOS Intro** | Short `pk` flash (edit for your initials) (~1.5s) then springboard |
 | **Live Status Bar** | Real-time clock updates every 10 seconds |
 | **Springboard Grid** | 3×3 app icon grid with labels and animated tap feedback |
 | **Frosted Glass Dock** | 4 pinned apps in a bottom dock pill |
@@ -65,7 +65,8 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 
 | App | Description |
 |---|---|
-| **AI Guide (Pai)** | AI assistant powered by Gemini + RAG backend. Knows your full background, projects, and story via `journey.txt` + `resume.txt`. Suggested question chips on first open. Rename and reprompt in `ChatPKApp.tsx`. |
+| **AI Guide (Pai)** | AI assistant powered by OpenRouter + RAG backend. Knows your full background, projects, and story via `journey.txt` + `resume.txt`. Suggested question chips on first open. Rename and reprompt in `ChatPKApp.tsx`. |
+| **Digital Twin (Talk to PK)** | FaceTime-style video call UI with incoming call screen, voice input (Web Speech API), and ElevenLabs TTS. Speaks as you in first person using your cloned voice. Requires `VITE_ELEVENLABS_API_KEY` + `VITE_ELEVENLABS_VOICE_ID`. |
 | **Projects** | Interactive project browser with tech stack badges, GitHub links, and live demo links. Data in `client/src/data/projects.ts`. |
 | **My Story** | Chapter-based visual timeline. Replace chapter content in `MyStoryApp.tsx`. |
 | **Resume / CV** | Inline resume viewer with PDF download. Replace the PDF in `client/public/data/` and update `CVApp.tsx`. |
@@ -97,9 +98,9 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 | Technology | Purpose |
 |---|---|
 | **Python / FastAPI** | REST API server |
-| **Google Gemini** | LLM for the AI guide's responses |
+| **OpenRouter** | Multi-model LLM fallback chain (Gemini, Claude, GPT-4.1, Qwen, Mistral) |
 | **RAG pipeline** | Your resume + journey as context (`backend/data/`) |
-| **CORS** | Update allowed origins in `backend/main.py` to match your domain |
+| **CORS** | Update allowed origins via `ALLOWED_ORIGINS` env var to match your domain |
 
 ### Infrastructure
 
@@ -107,7 +108,7 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 |---|---|
 | **Vercel** | Frontend hosting and CDN |
 | **Render** | Backend API hosting |
-| **IONOS** | Domain registrar (`pkowadkar.com`) |
+| **Your preferred registrar** | Domain registration (IONOS, Namecheap, Google Domains, etc.) |
 | **UptimeRobot** | Keep-alive pings to Render (prevents cold starts) |
 | **GitHub** | Source control, triggers Vercel deploys on push |
 
@@ -116,45 +117,54 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 ## Project Structure
 
 ```
-pkowadkar-portfolio/
+portfolio-skeleton/
 ├── client/
 │   ├── public/
-│   │   ├── manifest.json          # PWA manifest
+│   │   ├── manifest.json              # PWA manifest
 │   │   └── favicon.svg
 │   └── src/
 │       ├── components/
-│       │   ├── apps/              # Desktop app windows
-│       │   │   ├── ChatPKApp.tsx  # Pai AI chat (desktop)
+│       │   ├── apps/                  # Desktop app windows
+│       │   │   ├── ChatPKApp.tsx      # Pai AI chat (desktop)
+│       │   │   ├── VideoCallApp.tsx   # Digital Twin "Talk to PK" (desktop)
 │       │   │   ├── ProjectsApp.tsx
 │       │   │   ├── MyStoryApp.tsx
 │       │   │   ├── CVApp.tsx
 │       │   │   ├── TerminalApp.tsx
 │       │   │   └── ContactApp.tsx
-│       │   ├── mobile/            # iOS mobile shell
+│       │   ├── mobile/                # iOS mobile shell
 │       │   │   ├── MobileShell.tsx
 │       │   │   ├── MobileIntro.tsx
 │       │   │   ├── LockScreen.tsx
 │       │   │   ├── NotificationCenter.tsx
-│       │   │   └── apps/          # Mobile app screens
+│       │   │   └── apps/              # Mobile app screens
 │       │   │       ├── MobilePai.tsx
+│       │   │       ├── MobileDigitalTwin.tsx  # Digital Twin (mobile)
 │       │   │       ├── MobileProjects.tsx
 │       │   │       ├── MobileMyStory.tsx
 │       │   │       ├── MobileResume.tsx
 │       │   │       ├── MobileTerminal.tsx
 │       │   │       ├── MobileContact.tsx
 │       │   │       └── MobileHaiku.tsx
-│       │   ├── Desktop.tsx        # macOS desktop shell
-│       │   ├── MenuBar.tsx        # macOS menu bar
-│       │   ├── Dock.tsx           # macOS dock
-│       │   ├── IntroScreen.tsx    # Boot animation
+│       │   ├── Desktop.tsx            # macOS desktop shell
+│       │   ├── MenuBar.tsx            # macOS menu bar
+│       │   ├── Dock.tsx               # macOS dock
+│       │   ├── IntroScreen.tsx        # Boot animation
 │       │   └── HaikuEasterEgg.tsx
 │       ├── data/
-│       │   └── projects.ts        # Shared project data
+│       │   └── projects.ts            # Shared project data
 │       ├── hooks/
-│       │   └── useMobile.tsx      # Device detection hook
-│       └── App.tsx                # Root: device detection + routing
-├── backend/                       # Python FastAPI RAG backend
-│   └── main.py
+│       │   └── useMobile.tsx          # Device detection hook
+│       └── App.tsx                    # Root: device detection + routing
+├── backend/                           # Python FastAPI RAG backend
+│   ├── data/
+│   │   ├── journey.txt                # Your story (replace this)
+│   │   └── resume.txt                 # Your resume in plain text (replace this)
+│   ├── main.py
+│   ├── requirements.txt
+│   ├── render.yaml
+│   └── backend.env.example            # All required backend env vars
+├── frontend.env.example               # All required frontend env vars
 └── README.md
 ```
 
@@ -165,8 +175,8 @@ pkowadkar-portfolio/
 ### Step 1 — Clone and install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
-cd YOUR_REPO_NAME
+git clone https://github.com/p-kowadkar/portfolio-skeleton.git
+cd portfolio-skeleton
 pnpm install
 ```
 
@@ -182,7 +192,9 @@ pnpm install
 | `client/src/components/apps/MyStoryApp.tsx` | Replace chapter content with your own narrative. |
 | `client/public/data/` | Drop in your own images and resume PDF. Update references in `CVApp.tsx` and `experience.ts`. |
 
-### Step 3 — Configure environment variables
+> **Backend env vars:** See `backend.env.example` for all required variables (OpenRouter key, SMTP credentials, GitHub PAT, etc.) — set these on Render under Environment.
+
+### Step 3 — Configure frontend environment variables
 
 Create a `.env` file in the project root:
 
@@ -190,9 +202,12 @@ Create a `.env` file in the project root:
 # Backend API URL (your Render service URL after deploying backend/)
 VITE_API_URL=https://YOUR_BACKEND.onrender.com
 
-# Gemini API key — used as a direct fallback if backend is offline
-# Get one free at https://aistudio.google.com/
-VITE_GEMINI_API_KEY=your_gemini_api_key_here
+# Digital Twin voice (optional — needed for "Talk to PK" feature)
+# Get your key at https://elevenlabs.io → Profile → API Keys
+VITE_ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
+
+# Your cloned ElevenLabs voice ID (leave blank to use a default male voice)
+VITE_ELEVENLABS_VOICE_ID=your_voice_id_here
 ```
 
 ### Step 4 — Run locally
@@ -208,7 +223,7 @@ The app will be available at `http://localhost:3000`.
 | Service | What to deploy | Notes |
 |---|---|---|
 | **Vercel** | Frontend (`client/`) | Connect your GitHub repo, auto-deploys on push |
-| **Render** | Backend (`backend/`) | Uses `backend/render.yaml` for config |
+| **Render** | Backend (`backend/`) | Uses `backend/render.yaml` for config; set all env vars from `backend.env.example` |
 | **UptimeRobot** | Ping your Render URL every 5 min | Prevents Render free-tier cold starts |
 
 ### Backend (local)
@@ -218,24 +233,6 @@ cd backend
 pip install -r requirements.txt
 uvicorn main:app --reload
 ```
-
----
-
-## Local Development (if you already have your data filled in)
-
-### Prerequisites
-
-- Node.js 22+
-- pnpm
-
-### Setup
-
-```bash
-pnpm install
-pnpm dev
-```
-
-The app will be available at `http://localhost:3000`.
 
 ---
 
@@ -259,7 +256,7 @@ The visual language is deliberately cinematic — deep maroon and black, serif t
 
 ## Acknowledgements
 
-Built with [React](https://react.dev), [Vite](https://vitejs.dev), [Tailwind CSS](https://tailwindcss.com), [shadcn/ui](https://ui.shadcn.com), [Framer Motion](https://www.framer.com/motion/), and [Google Gemini](https://ai.google.dev). Hosted on [Vercel](https://vercel.com) and [Render](https://render.com).
+Built with [React](https://react.dev), [Vite](https://vitejs.dev), [Tailwind CSS](https://tailwindcss.com), [shadcn/ui](https://ui.shadcn.com), [Framer Motion](https://www.framer.com/motion/), and [OpenRouter](https://openrouter.ai). Hosted on [Vercel](https://vercel.com) and [Render](https://render.com).
 
 ---
 
