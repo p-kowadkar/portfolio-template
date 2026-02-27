@@ -12,13 +12,13 @@ This is the **public template** of [Pranav Kowadkar's portfolio](https://www.pko
 
 ### Desktop — macOS Experience
 
-![Desktop Home](https://files.manuscdn.com/user_upload_by_module/session_file/115134064/quaFucIFqSRXPDJA.png)
+![Desktop Home](assets/screenshot-desktop.png)
 
 *The macOS-style desktop with menu bar, draggable windows, animated wallpaper, and an auto-hiding dock.*
 
 ### Mobile — iOS Springboard Experience
 
-![Mobile Springboard](https://files.manuscdn.com/user_upload_by_module/session_file/115134064/gEwxrCwpbJzDtvgn.png)
+![Mobile Springboard](assets/screenshot-mobile.png)
 
 *The iOS-style springboard with live status bar, app icon grid, frosted glass dock, and pull-down notification center.*
 
