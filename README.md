@@ -1,8 +1,10 @@
-# Pranav Kowadkar — Portfolio
+# macOS Portfolio — Template / Skeleton
 
 > **An interactive portfolio designed as a fully functional operating system experience.** Desktop visitors get a macOS-inspired environment; mobile visitors get an iOS springboard. Both share the same underlying data and AI backbone.
 
-**Live:** [www.pkowadkar.com](https://www.pkowadkar.com)
+This is the **public template** of [Pranav Kowadkar's portfolio](https://www.pkowadkar.com). All personal data (resume, journey, profile images) has been replaced with clearly labeled placeholders so you can fork this and make it your own in ~20 minutes.
+
+**Live demo:** [www.pkowadkar.com](https://www.pkowadkar.com)
 
 ---
 
@@ -63,14 +65,14 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 
 | App | Description |
 |---|---|
-| **Pai** | AI assistant powered by Gemini + RAG backend. Knows Pranav's full background, projects, and story. Suggested question chips on first open. |
-| **Projects** | Interactive project browser with tech stack badges, GitHub links, and live demo links |
-| **My Story** | Chapter-based visual timeline of Pranav's journey from Mumbai to NYC |
-| **Resume / CV** | Inline resume viewer with PDF download |
-| **Terminal** | Easter egg terminal with `help`, `whoami`, `projects`, `contact`, and `secret` commands |
-| **Contact** | iOS Contacts-style card with email, LinkedIn, GitHub, and Telegram links |
-| **Haiku** | AI-generated haiku poetry with swipe gestures (mobile) or Konami code (desktop) |
-| **CareerForge** | External link to [forge-your-future.com](https://forge-your-future.com) |
+| **AI Guide (Pai)** | AI assistant powered by Gemini + RAG backend. Knows your full background, projects, and story via `journey.txt` + `resume.txt`. Suggested question chips on first open. Rename and reprompt in `ChatPKApp.tsx`. |
+| **Projects** | Interactive project browser with tech stack badges, GitHub links, and live demo links. Data in `client/src/data/projects.ts`. |
+| **My Story** | Chapter-based visual timeline. Replace chapter content in `MyStoryApp.tsx`. |
+| **Resume / CV** | Inline resume viewer with PDF download. Replace the PDF in `client/public/data/` and update `CVApp.tsx`. |
+| **Terminal** | Easter egg terminal with `help`, `whoami`, `projects`, `contact`, and `secret` commands. Update responses in `TerminalApp.tsx`. |
+| **Contact** | iOS Contacts-style card. Update links in `ContactApp.tsx` or the equivalent mobile app. |
+| **Haiku** | AI-generated haiku poetry with swipe gestures (mobile) or Konami code (desktop). |
+| **Browser / External app** | External link app — point it at your own product/project URL. |
 
 ---
 
@@ -95,9 +97,9 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 | Technology | Purpose |
 |---|---|
 | **Python / FastAPI** | REST API server |
-| **Google Gemini** | LLM for Pai's responses |
-| **RAG pipeline** | Pranav's resume, projects, and story as context |
-| **CORS** | Configured for `www.pkowadkar.com` and `pkowadkar.vercel.app` |
+| **Google Gemini** | LLM for the AI guide's responses |
+| **RAG pipeline** | Your resume + journey as context (`backend/data/`) |
+| **CORS** | Update allowed origins in `backend/main.py` to match your domain |
 
 ### Infrastructure
 
@@ -158,7 +160,68 @@ pkowadkar-portfolio/
 
 ---
 
-## Local Development
+## Getting Started (fork this)
+
+### Step 1 — Clone and install
+
+```bash
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+cd YOUR_REPO_NAME
+pnpm install
+```
+
+### Step 2 — Fill in your data (the only files you NEED to edit)
+
+| File | What to do |
+|---|---|
+| `backend/data/journey.txt` | Replace with your story — written in first person, narrative style. This feeds the RAG backend. |
+| `backend/data/resume.txt` | Paste your resume in plain text. Sections: SUMMARY, SKILLS, EXPERIENCE, PROJECTS, ACHIEVEMENTS. |
+| `client/src/components/apps/ChatPKApp.tsx` | Update `FALLBACK_SYSTEM_PROMPT` — fill in the `[YOUR_NAME]` / `[AI_GUIDE_NAME]` placeholders with your details. |
+| `client/src/data/projects.ts` | Replace with your own projects. |
+| `client/src/data/experience.ts` | Replace with your own work history. |
+| `client/src/components/apps/MyStoryApp.tsx` | Replace chapter content with your own narrative. |
+| `client/public/data/` | Drop in your own images and resume PDF. Update references in `CVApp.tsx` and `experience.ts`. |
+
+### Step 3 — Configure environment variables
+
+Create a `.env` file in the project root:
+
+```env
+# Backend API URL (your Render service URL after deploying backend/)
+VITE_API_URL=https://YOUR_BACKEND.onrender.com
+
+# Gemini API key — used as a direct fallback if backend is offline
+# Get one free at https://aistudio.google.com/
+VITE_GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+### Step 4 — Run locally
+
+```bash
+pnpm dev
+```
+
+The app will be available at `http://localhost:3000`.
+
+### Step 5 — Deploy
+
+| Service | What to deploy | Notes |
+|---|---|---|
+| **Vercel** | Frontend (`client/`) | Connect your GitHub repo, auto-deploys on push |
+| **Render** | Backend (`backend/`) | Uses `backend/render.yaml` for config |
+| **UptimeRobot** | Ping your Render URL every 5 min | Prevents Render free-tier cold starts |
+
+### Backend (local)
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+---
+
+## Local Development (if you already have your data filled in)
 
 ### Prerequisites
 
@@ -168,38 +231,11 @@ pkowadkar-portfolio/
 ### Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/p-kowadkar/pkowadkar-portfolio.git
-cd pkowadkar-portfolio
-
-# Install dependencies
 pnpm install
-
-# Start the dev server
 pnpm dev
 ```
 
 The app will be available at `http://localhost:3000`.
-
-### Environment Variables
-
-Create a `.env` file in the project root:
-
-```env
-# Backend API URL (Render service)
-VITE_API_URL=https://pkowadkar-portfolio.onrender.com
-
-# Gemini API key (direct fallback if backend is offline)
-VITE_GEMINI_API_KEY=your_gemini_api_key_here
-```
-
-### Backend (Python)
-
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload
-```
 
 ---
 
@@ -227,4 +263,4 @@ Built with [React](https://react.dev), [Vite](https://vitejs.dev), [Tailwind CSS
 
 ---
 
-*© 2025 Pranav Kowadkar. All rights reserved.*
+*Original design & implementation by [Pranav Kowadkar](https://www.pkowadkar.com). Template released for public use — attribution appreciated but not required.*
