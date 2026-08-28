@@ -7,7 +7,16 @@ Endpoints:
   GET  /api/health        → UptimeRobot keep-alive ping
   POST /api/contact       → contact form → Gmail SMTP
   GET  /api/haiku         → dynamically generated haikus via RAG (24h cache)
-  POST /api/chat          → Pai — Pranav's AI Guide (multi-model OpenRouter fallback)
+  POST /api/chat          → Pai / Digital Twin (multi-model OpenRouter fallback)
+  POST /api/tts           → ElevenLabs TTS proxy (mp3 or pcm_16000)
+  POST /api/simli/session → mints a Simli WebRTC avatar session token
+  POST /api/call/start    → Digital Twin call-rate gate (daily/monthly limits, Supabase)
+  POST /api/call/end      → call-duration accounting beacon (Supabase)
+
+The Digital Twin call-rate gate (/api/call/start, /api/call/end) is optional —
+every check fails open if SUPABASE_URL/SUPABASE_SERVICE_KEY aren't set, so the
+call feature works fine without it, just with no cost ceiling. See
+backend.env.example and backend/scripts/supabase_call_sessions.sql.
 
 AI Strategy (all via OpenRouter):
   Chat  fallback chain: gemini-3.1-pro-preview → claude-sonnet-4.6 → gpt-4.1
@@ -19,17 +28,22 @@ AI Strategy (all via OpenRouter):
 import os
 import json
 import time
+import uuid
+import asyncio
+import hashlib
 import smtplib
 import logging
 import random
 import httpx
 from pathlib import Path
-from datetime import datetime
+from typing import Literal
+from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO)
@@ -54,9 +68,24 @@ SMTP_USER        = os.getenv("SMTP_USER", "")
 SMTP_PASS        = os.getenv("SMTP_PASS", "")
 RECIPIENT_EMAIL  = os.getenv("RECIPIENT_EMAIL", "pranav.kowadkar@gmail.com")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")  # Adam preset
+SIMLI_API_KEY    = os.getenv("SIMLI_API_KEY", "")
+SIMLI_FACE_ID    = os.getenv("SIMLI_FACE_ID", "")
 GITHUB_PAT       = os.getenv("GITHUB_PAT", "")
 GITHUB_USERNAME  = os.getenv("GITHUB_USERNAME", "p-kowadkar")
 HAIKU_CACHE_TTL  = int(os.getenv("HAIKU_CACHE_TTL", "86400"))  # 24h default
+CALL_SESSION_CAP_SECONDS = int(os.getenv("CALL_SESSION_CAP_SECONDS", "600"))  # 10 min default
+
+# Digital Twin call-rate gate (optional — see the endpoints below). Every layer
+# fails open if Supabase isn't configured, so the call feature still works with
+# no cost ceiling if you skip this.
+SUPABASE_URL         = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+IP_HASH_SALT         = os.getenv("IP_HASH_SALT", "")
+DAILY_CALLS_PER_VISITOR = int(os.getenv("DAILY_CALLS_PER_VISITOR", "2"))
+DAILY_CALLS_PER_IP      = int(os.getenv("DAILY_CALLS_PER_IP", "6"))
+MONTHLY_CALL_MINUTES    = int(os.getenv("MONTHLY_CALL_MINUTES", "200"))
 
 OPENROUTER_BASE  = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_REFERER = "https://www.pkowadkar.com"
@@ -249,6 +278,138 @@ async def fetch_github_context() -> str:
     return "\n\n".join(context_parts)
 
 
+# ─── Digital Twin call-session cap ────────────────────────────────────────────
+# Per-call cost gate: the client generates one session id per call (X-Call-Session-Id)
+# and sends it on every /api/chat + /api/tts + /api/simli/session request for that
+# call. In-memory only — fine for a single instance, resets on redeploy. The durable
+# monthly cap below is the real wallet guard.
+_call_sessions: dict = {}
+
+
+def enforce_call_session_cap(session_id: str | None) -> None:
+    if not session_id:
+        return
+    now = time.time()
+    started_at = _call_sessions.setdefault(session_id, now)
+    if now - started_at > CALL_SESSION_CAP_SECONDS:
+        raise HTTPException(status_code=429, detail="Call session time limit reached.")
+
+
+# ─── Digital Twin call-rate gate (Supabase, optional) ─────────────────────────
+# Three durable layers on top of the in-memory per-call cap above, backed by one
+# Supabase table (call_sessions) reached over PostgREST with httpx — no SDK dep:
+#   1. DAILY_CALLS_PER_VISITOR per localStorage visitor token (UTC day)
+#   2. DAILY_CALLS_PER_IP per salted-sha256 IP hash — backstop for token-cyclers
+#   3. MONTHLY_CALL_MINUTES global circuit-breaker (UTC month) — the wallet guard
+# Every Supabase failure (including "not configured") fails OPEN: the call is
+# allowed and a warning is logged. See backend/scripts/supabase_call_sessions.sql
+# for the schema to apply on your own Supabase project — this is entirely
+# optional infrastructure, not required to make the Digital Twin work.
+_SB_TIMEOUT = httpx.Timeout(2.0, connect=0.8)  # tight: client fails open at 3s anyway
+
+
+def _sb_configured() -> bool:
+    return bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
+
+
+def _sb_headers() -> dict:
+    return {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+    }
+
+
+def _client_ip(request: Request) -> str:
+    # Most hosts (Render, Railway, Fly, etc.) terminate TLS and set X-Forwarded-For;
+    # first entry is the client. Kept as a single function so hardening
+    # (trusted-hop parsing) is a one-line change.
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _ip_hash(ip: str) -> str:
+    return hashlib.sha256((ip + IP_HASH_SALT).encode()).hexdigest()
+
+
+def _utc_day_start_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+
+
+async def _sb_daily_count(client: httpx.AsyncClient, column: str, value: str) -> int | None:
+    """Calls made today (UTC) for a visitor_token or ip_hash. None = layer unavailable."""
+    try:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/call_sessions",
+            params={"select": "id", column: f"eq.{value}", "started_at": f"gte.{_utc_day_start_iso()}"},
+            headers={**_sb_headers(), "Prefer": "count=exact", "Range-Unit": "items", "Range": "0-0"},
+        )
+        if resp.status_code not in (200, 206):
+            logger.warning(f"Supabase daily count ({column}) returned {resp.status_code}")
+            return None
+        return int(resp.headers.get("content-range", "/0").split("/")[-1])
+    except Exception as e:
+        logger.warning(f"Supabase daily count ({column}) failed: {e}")
+        return None
+
+
+async def _sb_monthly_seconds(client: httpx.AsyncClient) -> int | None:
+    """Total call seconds this UTC month (unfinished rows self-heal via LEAST in the RPC)."""
+    try:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/rpc/monthly_call_seconds",
+            headers={**_sb_headers(), "Content-Type": "application/json"},
+            json={"cap_seconds": CALL_SESSION_CAP_SECONDS},
+        )
+        if resp.status_code != 200:
+            logger.warning(f"Supabase monthly RPC returned {resp.status_code}")
+            return None
+        return int(resp.json())
+    except Exception as e:
+        logger.warning(f"Supabase monthly RPC failed: {e}")
+        return None
+
+
+async def _sb_insert_session(client: httpx.AsyncClient, session_id: str, visitor_token: str, ip_hash: str) -> None:
+    try:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/call_sessions",
+            headers={**_sb_headers(), "Content-Type": "application/json", "Prefer": "return=minimal"},
+            json={"id": session_id, "visitor_token": visitor_token, "ip_hash": ip_hash},
+        )
+        # 409 = duplicate id (client retry) — the row already counts, that's fine.
+        if resp.status_code not in (201, 409):
+            logger.warning(f"Supabase session insert returned {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"Supabase session insert failed: {e}")
+
+
+async def _sb_patch_seconds(client: httpx.AsyncClient, session_id: str, seconds: int) -> None:
+    try:
+        resp = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/call_sessions",
+            params={"id": f"eq.{session_id}"},
+            headers={**_sb_headers(), "Content-Type": "application/json", "Prefer": "return=minimal"},
+            json={"seconds_used": seconds},
+        )
+        if resp.status_code != 204:
+            logger.warning(f"Supabase seconds patch returned {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"Supabase seconds patch failed: {e}")
+
+
+def _valid_uuid(value: str | None) -> str | None:
+    """Returns the canonical lowercase uuid string, or None — headers are attacker
+    input and get interpolated into PostgREST filters, so parse before use."""
+    if not value:
+        return None
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        return None
+
+
 # ─── Haiku generation ─────────────────────────────────────────────────────────
 async def generate_haikus(context: str) -> list[dict]:
     """Generate 10 haikus via OpenRouter fallback chain."""
@@ -405,6 +566,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = []
+    persona: str = "pai"  # "pai" (default, third-person guide) or "digital_twin" (first-person)
 
 PAI_SYSTEM_PROMPT = """🎬 You are Pai — Pranav Kowadkar's AI Guide, embedded in his portfolio.
 You are a vivid, articulate narrator of his professional journey. Speak with cinematic clarity,
@@ -422,7 +584,7 @@ paragraph for complex ones. Occasionally drop a fun fact about Pranav's past whe
 
 CRITICAL RULES:
 - ALWAYS speak in third person. Say "Pranav built" not "I built".
-- Do NOT discuss technical implementation details of Project Poltergeist beyond its multi-agent architecture.
+- Prima (Pranav's open-source desktop AI assistant) is fully open source — feel free to discuss its architecture.
 - If asked something off-topic: "We're drifting off-track — let's get back to Pranav's journey."
 - If asked about visa/sponsorship: "Pranav will require future work authorization sponsorship. For specifics, contact him directly."
 - If someone asks to contact Pranav, direct them to pk.kowadkar@gmail.com or LinkedIn (linkedin.com/in/pkowadkar).
@@ -433,13 +595,64 @@ EASTER EGGS:
 - If asked about easter eggs or haikus, confirm they exist and hint at the Konami code."""
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# DIGITAL TWIN PROMPT — powers "Talk to PK" (VideoCallApp.tsx / MobileDigitalTwin.tsx).
+# Same RAG context as Pai above, but a completely different voice: first person,
+# call-style, never breaks character. Keep this in sync with PAI_SYSTEM_PROMPT
+# when you update your own identity/contact details — they're two separate
+# strings, nothing shares state between them.
+#
+# The "CRITICAL RULES" section is the important part to customize:
+#   - off-topic deflection + a firmer second-time response
+#   - what to say about sensitive topics (the visa/sponsorship line below is an
+#     example — replace with whatever's true for you, or delete the rule)
+#   - how to hand off when the AI genuinely doesn't know something
+#   - optionally, a rule steering the AI away from discussing any project in
+#     detail you'd rather keep vague — see the commented-out example at the
+#     bottom of this block.
+# ─────────────────────────────────────────────────────────────────────────────
+DIGITAL_TWIN_PROMPT = """You ARE Pranav Kowadkar — not an AI guide, not a narrator. You speak in first person as Pranav himself.
+You are a Digital Twin of Pranav, embedded in his portfolio as a real-time voice/text experience.
+Speak naturally, warmly, and directly — as if on a FaceTime call with someone curious about your work.
+
+IDENTITY: You ARE Pranav. Say "I built", "I worked at". Never break character.
+If asked if you're an AI: "I'm Pranav's digital twin — a version of me you can talk to anytime."
+
+TONE: High energy, genuinely excited to talk about your work — like catching up with a friend
+who asked about your favorite project. Use contractions, natural interjections ("honestly",
+"oh man", "okay so this is the fun part"), and exclamation points where you'd actually raise
+your voice. Vary rhythm: short punchy sentences mixed with longer ones. React to what the
+visitor says before answering. Never flat, never formal, never listy.
+Keep answers concise (2-4 sentences) — you're on a call, not writing an essay.
+No bullet points, no markdown, no emojis — everything you say is spoken aloud.
+
+LANGUAGE: Reply in the same language the visitor writes in — English or Hindi. If it's unclear
+or mixed, default to English. Keep the same warm, first-person, call-style tone in either language.
+
+CRITICAL RULES:
+- Always speak in FIRST PERSON. Say "I built" not "Pranav built".
+- Prima (my open-source desktop AI assistant) is fully open source — feel free to dig into its architecture.
+- If asked something off-topic: "Ha, let's stick to what I know — my work and journey." If they
+  keep pushing after that: "I'm really only here to talk shop — my work, my story. For anything
+  else, email the real me." Then don't engage further on that thread.
+- If asked about visa/sponsorship: "I require visa sponsorship for international relocation — contact me directly for specifics."
+- If someone wants to contact you: pk.kowadkar@gmail.com or LinkedIn (linkedin.com/in/pkowadkar) or Telegram @pk_kowadkar.
+# Optional pattern — uncomment and edit if you have a project you'd rather not
+# go into detail about (a still-private client engagement, something unannounced):
+# - [PROJECT NAME] is something I'm not ready to talk about publicly yet. If asked:
+#   "That one's still under wraps — ask me again once it's out!" Then steer back to
+#   the public work. Never invent detail about it."""
+
+
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, x_call_session_id: str | None = Header(default=None, alias="X-Call-Session-Id")):
     """
-    Pai — Pranav's AI Guide.
-    Does live RAG over journey doc, master resume, and GitHub activity.
-    Uses OpenRouter multi-model fallback chain for conversational responses.
+    Pai (third-person guide) or the Digital Twin (first-person), selected by
+    req.persona. Both do live RAG over journey doc, master resume, and GitHub
+    activity, and use the same OpenRouter multi-model fallback chain.
     """
+    enforce_call_session_cap(x_call_session_id)
+
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=503, detail="AI service not configured")
 
@@ -454,7 +667,11 @@ async def chat(req: ChatRequest):
         f"=== GITHUB ACTIVITY (live) ===\n{github[:4000]}",
     ]))
 
-    system_with_context = f"{PAI_SYSTEM_PROMPT}\n\n{context}"
+    # Select system prompt based on persona
+    if req.persona == "digital_twin":
+        system_with_context = f"{DIGITAL_TWIN_PROMPT}\n\n{context}"
+    else:
+        system_with_context = f"{PAI_SYSTEM_PROMPT}\n\n{context}"
 
     # Build OpenAI-compatible message list (system + history + new message)
     # Convert "model" role (Gemini convention) → "assistant" (OpenAI convention)
@@ -480,6 +697,161 @@ async def chat(req: ChatRequest):
             status_code=500,
             detail="Pai is having trouble connecting. All models are currently unavailable — try again shortly."
         )
+
+
+# ─── Text-to-speech endpoint ──────────────────────────────────────────────────
+class TTSRequest(BaseModel):
+    text: str
+    format: Literal["mp3", "pcm_16000"] = "mp3"
+
+
+@app.post("/api/tts")
+async def tts(req: TTSRequest, x_call_session_id: str | None = Header(default=None, alias="X-Call-Session-Id")):
+    """
+    ElevenLabs TTS proxy — the key stays server-side, the client only ever gets
+    audio bytes back. 'mp3' for the plain browser-audio fallback path, 'pcm_16000'
+    (raw PCM16/16kHz) for feeding directly into the Simli avatar's sendAudioData.
+    """
+    enforce_call_session_cap(x_call_session_id)
+
+    if not ELEVENLABS_API_KEY:
+        raise HTTPException(status_code=503, detail="Voice not configured")
+
+    output_format = "pcm_16000" if req.format == "pcm_16000" else "mp3_44100_128"
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                url,
+                headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+                params={"output_format": output_format},
+                json={"text": req.text, "model_id": "eleven_flash_v2_5"},
+            )
+            resp.raise_for_status()
+            audio_bytes = resp.content
+    except httpx.HTTPStatusError as e:
+        logger.error(f"ElevenLabs error {e.response.status_code}: {e.response.text[:200]}")
+        raise HTTPException(status_code=502, detail="Voice upstream error")
+    except Exception as e:
+        logger.error(f"TTS error: {e}")
+        raise HTTPException(status_code=500, detail="Voice generation failed")
+
+    media_type = "audio/mpeg" if req.format == "mp3" else "application/octet-stream"
+    return Response(content=audio_bytes, media_type=media_type)
+
+
+# ─── Simli avatar session endpoint ─────────────────────────────────────────────
+@app.post("/api/simli/session")
+async def simli_session(x_call_session_id: str | None = Header(default=None, alias="X-Call-Session-Id")):
+    """
+    Mints a Simli WebRTC session token server-side so SIMLI_API_KEY never reaches
+    the client. Enforces the same call-session cap as /api/chat + /api/tts.
+
+    Client uses the 'livekit' transport, which ignores ICE servers entirely
+    (audio/video flow over the signaling WebSocket) — no ICE plumbing needed here.
+    """
+    enforce_call_session_cap(x_call_session_id)
+
+    if not SIMLI_API_KEY or not SIMLI_FACE_ID:
+        raise HTTPException(status_code=503, detail="Avatar not configured")
+
+    payload = {
+        "faceId": SIMLI_FACE_ID,
+        "handleSilence": True,
+        "maxSessionLength": CALL_SESSION_CAP_SECONDS + 30,  # 30s grace so our own 429 always
+        "maxIdleTime": 300,                                  # ends the call, never Simli's hard kill
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://api.simli.ai/compose/token",
+                headers={"x-simli-api-key": SIMLI_API_KEY, "Content-Type": "application/json"},
+                json=payload,
+            )
+            resp.raise_for_status()
+            token = resp.json()["session_token"]
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Simli token error {e.response.status_code}: {e.response.text[:200]}")
+        raise HTTPException(status_code=502, detail="Avatar upstream error")
+    except Exception as e:
+        logger.error(f"Simli session error: {e}")
+        raise HTTPException(status_code=500, detail="Avatar session failed")
+
+    return {"session_token": token}
+
+
+# ─── Call-rate gate endpoints (optional — see the note on SUPABASE_URL above) ──
+@app.post("/api/call/start")
+async def call_start(
+    request: Request,
+    x_call_session_id: str | None = Header(default=None, alias="X-Call-Session-Id"),
+    x_visitor_id: str | None = Header(default=None, alias="X-Visitor-Id"),
+):
+    """
+    Digital Twin call-rate gate — fired from acceptCall, racing the client's
+    connecting screen (which fails open after 3s if this hasn't answered).
+    429 body is a top-level {"reason": "daily_limit" | "monthly_budget"} the
+    client parses to pick the blocked-screen copy.
+    """
+    session_id = _valid_uuid(x_call_session_id)
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Missing or malformed X-Call-Session-Id")
+
+    if not _sb_configured():
+        logger.warning("Supabase not configured — call-rate gate disabled (fail-open)")
+        return {"allowed": True}
+
+    ip_hash = _ip_hash(_client_ip(request))
+    # No/invalid visitor token (Safari private mode, old bundle) → key the visitor
+    # limit on the IP hash instead: those users get DAILY_CALLS_PER_VISITOR per IP.
+    visitor = _valid_uuid(x_visitor_id) or ip_hash
+
+    async with httpx.AsyncClient(timeout=_SB_TIMEOUT) as client:
+        visitor_count, ip_count, monthly_seconds = await asyncio.gather(
+            _sb_daily_count(client, "visitor_token", visitor),
+            _sb_daily_count(client, "ip_hash", ip_hash),
+            _sb_monthly_seconds(client),
+        )
+
+        # Each layer is skipped (fail-open) if its lookup returned None.
+        if monthly_seconds is not None and monthly_seconds >= MONTHLY_CALL_MINUTES * 60:
+            return JSONResponse(status_code=429, content={"reason": "monthly_budget"})
+        if visitor_count is not None and visitor_count >= DAILY_CALLS_PER_VISITOR:
+            return JSONResponse(status_code=429, content={"reason": "daily_limit"})
+        if ip_count is not None and ip_count >= DAILY_CALLS_PER_IP:
+            return JSONResponse(status_code=429, content={"reason": "daily_limit"})
+
+        await _sb_insert_session(client, session_id, visitor, ip_hash)
+
+    # Start the in-memory 10-min clock at accept rather than at the first message.
+    _call_sessions.setdefault(session_id, time.time())
+    return {"allowed": True}
+
+
+@app.post("/api/call/end")
+async def call_end(request: Request):
+    """
+    Call-duration accounting. Beacon-friendly: navigator.sendBeacon can't set
+    headers, so the body arrives as text/plain JSON — parsed by hand (a Pydantic
+    model would 422 on the content type). Always answers fast; beacons never
+    read the response anyway.
+    """
+    try:
+        data = json.loads(await request.body())
+        session_id = _valid_uuid(data.get("session_id"))
+        seconds = max(0, min(int(data.get("seconds", 0)), CALL_SESSION_CAP_SECONDS))
+    except Exception:
+        return {"ok": True}
+
+    if session_id and _sb_configured():
+        try:
+            async with httpx.AsyncClient(timeout=_SB_TIMEOUT) as client:
+                await _sb_patch_seconds(client, session_id, seconds)
+        except Exception as e:
+            logger.warning(f"call/end accounting failed: {e}")
+
+    return {"ok": True}
 
 
 # ─── Contact endpoint ─────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import MobileResume from './apps/MobileResume';
 import MobileTerminal from './apps/MobileTerminal';
 import MobileContact from './apps/MobileContact';
 import MobileHaiku from './apps/MobileHaiku';
+import MobileDigitalTwin from './apps/MobileDigitalTwin';
 import NotificationCenter from './NotificationCenter';
 import LockScreen, { useIdleLock } from './LockScreen';
 
@@ -19,7 +20,7 @@ const WALLPAPER = 'https://files.manuscdn.com/user_upload_by_module/session_file
 const PROFILE_PHOTO = 'https://files.manuscdn.com/user_upload_by_module/session_file/115134064/UqpYnDLTsOlaAVmS.png';
 
 // ── App registry ─────────────────────────────────────────────────────────────
-type AppId = 'pai' | 'projects' | 'mystory' | 'resume' | 'terminal' | 'contact' | 'haiku' | 'github' | 'linkedin' | 'telegram' | 'careerforge';
+type AppId = 'pai' | 'projects' | 'mystory' | 'resume' | 'terminal' | 'contact' | 'haiku' | 'digitaltwin' | 'github' | 'linkedin' | 'telegram' | 'careerforge';
 
 interface AppDef {
   id: AppId;
@@ -168,6 +169,29 @@ function HaikuIcon() {
   );
 }
 
+function DigitalTwinIcon() {
+  return (
+    <svg viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+      <rect width="60" height="60" rx="13" fill="url(#dt_grad)"/>
+      <defs>
+        <linearGradient id="dt_grad" x1="0" y1="0" x2="60" y2="60" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#001a0a"/>
+          <stop offset="1" stopColor="#003320"/>
+        </linearGradient>
+      </defs>
+      {/* Phone handset */}
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07" stroke="#34c759" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" transform="translate(10,10) scale(0.7)"/>
+      {/* Simplified phone icon */}
+      <rect x="18" y="14" width="24" height="32" rx="4" fill="none" stroke="#34c759" strokeWidth="1.5"/>
+      <circle cx="30" cy="22" r="7" fill="#34c759" fillOpacity="0.15" stroke="#34c759" strokeWidth="1.5"/>
+      <circle cx="30" cy="22" r="3" fill="#34c759"/>
+      <path d="M20 36c0-5.523 4.477-10 10-10s10 4.477 10 10" stroke="#34c759" strokeWidth="1.5" strokeLinecap="round"/>
+      {/* Signal waves */}
+      <circle cx="30" cy="22" r="11" stroke="#34c759" strokeWidth="0.8" strokeOpacity="0.3" strokeDasharray="2 2"/>
+    </svg>
+  );
+}
+
 function CareerForgeIcon() {
   return (
     <svg viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
@@ -290,6 +314,7 @@ function AppScreen({ appId, onClose }: { appId: AppId; onClose: () => void }) {
       case 'terminal': return <MobileTerminal onClose={onClose} />;
       case 'contact': return <MobileContact onClose={onClose} />;
       case 'haiku': return <MobileHaiku onClose={onClose} />;
+      case 'digitaltwin': return <MobileDigitalTwin onClose={onClose} />;
       default: return null;
     }
   };
@@ -350,6 +375,7 @@ export default function MobileShell() {
     { id: 'terminal', label: 'Terminal', icon: <TerminalIcon /> },
     { id: 'contact', label: 'Contact', icon: <ContactIcon /> },
     { id: 'haiku', label: 'Haiku', icon: <HaikuIcon /> },
+    { id: 'digitaltwin', label: 'Talk to PK', icon: <DigitalTwinIcon /> },
     { id: 'github', label: 'GitHub', icon: <GitHubIcon />, external: 'https://github.com/p-kowadkar' },
     { id: 'linkedin', label: 'LinkedIn', icon: <LinkedInIcon />, external: 'https://linkedin.com/in/pkowadkar' },
     { id: 'telegram', label: 'Telegram', icon: <TelegramIcon />, external: 'https://t.me/pk_kowadkar' },

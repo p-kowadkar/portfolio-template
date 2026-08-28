@@ -2,7 +2,7 @@
 
 > **An interactive portfolio designed as a fully functional operating system experience.** Desktop visitors get a macOS-inspired environment; mobile visitors get an iOS springboard. Both share the same underlying data and AI backbone.
 
-This is the **public template** of [Pranav Kowadkar's portfolio](https://www.pkowadkar.com). All personal data (resume, journey, profile images) has been replaced with clearly labeled placeholders so you can fork this and make it your own in ~30–45 minutes.
+This is the **public template** of [Pranav Kowadkar's portfolio](https://www.pkowadkar.com). The sensitive stuff — the full life-story narrative fed to the AI Guide (`backend/data/journey.txt`, `resume.txt`) — is stripped to clearly labeled placeholders. Everything else (photos, project pages, contact links, the AI's system prompt) is left as real example content on purpose, so you can see what a finished one actually looks and sounds like before swapping it for your own — see "Fill in your data" below for the full list of what to change.
 
 **Live demo:** [www.pkowadkar.com](https://www.pkowadkar.com)
 
@@ -66,7 +66,7 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 | App | Description |
 |---|---|
 | **AI Guide (Pai)** | AI assistant powered by OpenRouter + RAG backend. Knows your full background, projects, and story via `journey.txt` + `resume.txt`. Suggested question chips on first open. Rename and reprompt in `ChatPKApp.tsx`. |
-| **Digital Twin (Talk to PK)** | FaceTime-style video call UI with incoming call screen, voice input (Web Speech API), and ElevenLabs TTS. Speaks as you in first person using your cloned voice. Requires `VITE_ELEVENLABS_API_KEY` + `VITE_ELEVENLABS_VOICE_ID`. |
+| **Digital Twin (Talk to PK)** | FaceTime-style video call: voice input (Web Speech API) → `/api/chat` (first-person persona) → ElevenLabs TTS in your cloned voice → Simli real-time talking-head avatar lip-syncing over your portrait. Live captions + on-demand transcript. Works as voice-only (no avatar) if Simli isn't configured. Setup: `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` + `SIMLI_API_KEY`/`SIMLI_FACE_ID` in `backend/.env` — see `backend.env.example` for the full walkthrough (voice cloning, avatar creation, timing/cost notes). An optional Supabase-backed rate gate keeps a runaway bill from a public link — see the same file. |
 | **Projects** | Interactive project browser with tech stack badges, GitHub links, and live demo links. Data in `client/src/data/projects.ts`. |
 | **My Story** | Chapter-based visual timeline. Replace chapter content in `MyStoryApp.tsx`. |
 | **Resume / CV** | Inline resume viewer with PDF download. Replace the PDF in `client/public/data/` and update `CVApp.tsx`. |
@@ -92,6 +92,7 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 | **react-rnd** | Draggable/resizable desktop windows |
 | **Wouter** | Lightweight client-side routing |
 | **Lucide React** | Icon library |
+| **simli-client** | WebRTC client for the Digital Twin's talking-head avatar (optional — call still works voice-only without it) |
 
 ### Backend (separate Render service)
 
@@ -100,6 +101,9 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 | **Python / FastAPI** | REST API server |
 | **OpenRouter** | Multi-model LLM fallback chain (Gemini, Claude, GPT-4.1, Qwen, Mistral) |
 | **RAG pipeline** | Your resume + journey as context (`backend/data/`) |
+| **ElevenLabs** | Digital Twin voice (TTS from a cloned voice) |
+| **Simli** | Digital Twin real-time avatar (optional) |
+| **Supabase** | Optional Digital Twin call-rate gate (daily/monthly limits) — fails open (unlimited calls) if not configured |
 | **CORS** | Update allowed origins via `ALLOWED_ORIGINS` env var to match your domain |
 
 ### Infrastructure
@@ -154,16 +158,26 @@ portfolio-skeleton/
 │       ├── data/
 │       │   └── projects.ts            # Shared project data
 │       ├── hooks/
-│       │   └── useMobile.tsx          # Device detection hook
+│       │   ├── useMobile.tsx          # Device detection hook
+│       │   ├── useSimliAvatar.ts      # Digital Twin: Simli WebRTC avatar
+│       │   └── useCaptions.ts         # Digital Twin: live caption pacing
+│       ├── lib/
+│       │   ├── callAudio.ts           # Digital Twin: TTS playback (backend + browser fallback)
+│       │   ├── callGate.ts            # Digital Twin: client half of the optional rate gate
+│       │   └── identity.ts            # Digital Twin: visitor/session id helpers
 │       └── App.tsx                    # Root: device detection + routing
 ├── backend/                           # Python FastAPI RAG backend
 │   ├── data/
 │   │   ├── journey.txt                # Your story (replace this)
 │   │   └── resume.txt                 # Your resume in plain text (replace this)
+│   ├── scripts/
+│   │   └── supabase_call_sessions.sql # Optional: Digital Twin call-rate gate schema
 │   ├── main.py
 │   ├── requirements.txt
 │   ├── render.yaml
 │   └── backend.env.example            # All required backend env vars
+├── scripts/
+│   └── fix-simli-client-casing.mjs    # postinstall fix for a simli-client packaging bug
 ├── frontend.env.example               # All required frontend env vars
 └── README.md
 ```
@@ -191,8 +205,10 @@ pnpm install
 | `client/src/data/experience.ts` | Replace with your own work history. |
 | `client/src/components/apps/MyStoryApp.tsx` | Replace chapter content with your own narrative. |
 | `client/public/data/` | Drop in your own images and resume PDF. Update references in `CVApp.tsx` and `experience.ts`. |
+| `backend/main.py` — `DIGITAL_TWIN_PROMPT` | First-person persona for the "Talk to PK" call. Separate from `PAI_SYSTEM_PROMPT`, doesn't share state with it — update both when you change your identity/contact info. |
+| `client/src/components/apps/VideoCallApp.tsx` + `mobile/apps/MobileDigitalTwin.tsx` | Set `ANIME_PORTRAIT` to your own reference photo and update the greeting line — see the setup comment at the top of `VideoCallApp.tsx`. Keep both files in sync. |
 
-> **Backend env vars:** See `backend.env.example` for all required variables (OpenRouter key, SMTP credentials, GitHub PAT, etc.) — set these on Render under Environment.
+> **Backend env vars:** See `backend.env.example` for all required variables (OpenRouter key, SMTP credentials, GitHub PAT, ElevenLabs/Simli keys for the Digital Twin, optional Supabase call-rate gate, etc.) — set these on Render under Environment.
 
 ### Step 3 — Configure frontend environment variables
 
@@ -201,14 +217,9 @@ Create a `.env` file in the project root:
 ```env
 # Backend API URL (your Render service URL after deploying backend/)
 VITE_API_URL=https://YOUR_BACKEND.onrender.com
-
-# Digital Twin voice (optional — needed for "Talk to PK" feature)
-# Get your key at https://elevenlabs.io → Profile → API Keys
-VITE_ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
-
-# Your cloned ElevenLabs voice ID (leave blank to use a default male voice)
-VITE_ELEVENLABS_VOICE_ID=your_voice_id_here
 ```
+
+That's the only frontend env var. ElevenLabs and Simli keys for the Digital Twin live in `backend/.env` only — they stay server-side, never in the client bundle. See `backend.env.example` for those.
 
 ### Step 4 — Run locally
 

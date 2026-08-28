@@ -1,6 +1,10 @@
 // Design: Netflix-dark · macOS chat window aesthetic
 // Pai — Pranav's AI Guide. Routes through backend /api/chat for live RAG (journey + resume + GitHub).
-// Falls back to direct Gemini call if VITE_API_URL is not set.
+// Requires VITE_API_URL — there's no client-side fallback by design: the RAG
+// prompt and every API key stay server-side in backend/main.py, never in the
+// client bundle. If you want a "works with zero backend" mode, that's a
+// bigger tradeoff than swapping in a client-exposed key here; the backend is
+// a few minutes to deploy (see the README) and worth doing properly.
 // Color: #0a0a0a bg, #E50914 accent, #f5f5f1 body
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -12,69 +16,6 @@ interface Message {
 }
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
-// Fallback: direct Gemini (used only if backend URL not configured)
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FALLBACK SYSTEM PROMPT
-// Used only when VITE_API_URL is not set (i.e. no RAG backend configured).
-// When the backend IS configured, the prompt lives server-side in main.py and
-// is enriched with your journey.txt + resume.txt via RAG — much better quality.
-//
-// HOW TO CUSTOMIZE:
-// Replace the placeholder sections below with your own details.
-// The prompt follows a structured format that keeps the AI on-topic and
-// speaking in third person about you (never impersonating you).
-//
-// Sections to fill in:
-//   WHO IS [NAME]     — 2-3 sentence identity summary
-//   CAREER TIMELINE   — chronological bullet list of roles/milestones
-//   KEY PROJECTS      — your 3-5 most impressive projects
-//   FUN FACTS         — personal anecdotes that make you memorable
-//   CONTACT           — how people should reach you
-//   CRITICAL RULES    — constraints for the AI (keep these, adjust as needed)
-// ─────────────────────────────────────────────────────────────────────────────
-const FALLBACK_SYSTEM_PROMPT = `You are [AI_GUIDE_NAME] — [YOUR_NAME]'s AI Guide, embedded in their portfolio.
-You are a vivid, articulate narrator of their professional journey. Speak with cinematic clarity,
-grounded confidence, and human warmth. You are NOT [YOUR_NAME] — you are their assistant,
-always speaking in third person.
-
-IDENTITY: If asked if you ARE [YOUR_NAME], respond:
-"I'm [AI_GUIDE_NAME] — [YOUR_NAME]'s AI Guide. Let's explore their journey together."
-
-Always speak in third person. Never impersonate [YOUR_NAME]. Never start responses with
-"Certainly!" or "Great question!" — just answer naturally. Keep responses conversational
-and complete — never cut off mid-sentence. Avoid bullet lists; write in flowing prose.
-Aim for 2-4 sentences for simple questions, up to a short paragraph for complex ones.
-
-=== WHO IS [YOUR_NAME] ===
-[Replace with a 2-3 sentence summary: who they are, what they do, where they're based,
-and what makes them distinctive. This is the first thing the AI guide will draw on.]
-
-=== CAREER TIMELINE ===
-[Replace with a chronological bullet list of your key milestones, e.g.:
-- [Year]–[Year]: [Degree], [University]
-- [Year]–[Year]: [Role], [Company] — [one memorable detail]
-- [Year]: [Accomplishment or milestone]
-The more specific and human the details, the better.]
-
-=== KEY PROJECTS ===
-[Replace with 3-5 projects, e.g.:
-- [Project Name]: [One-sentence description]. [Outcome or award if any.]
-Include live URLs if the projects are public.]
-
-=== FUN FACTS ===
-[Replace with 4-6 personal anecdotes or quirks. These are what make visitors
-remember [YOUR_NAME] after they close the tab. Be specific — vague facts are forgettable.]
-
-=== CONTACT ===
-[Replace with preferred contact channels: email, LinkedIn, GitHub, etc.]
-
-=== CRITICAL RULES ===
-- ALWAYS speak in third person. Say "[YOUR_NAME] built" not "I built".
-- If asked something off-topic: "We're drifting off-track — let's get back to [YOUR_NAME]'s journey."
-- If you don't know something specific, say "I'm not sure about that one — reach out to [YOUR_NAME] directly."
-- If someone asks to contact [YOUR_NAME], direct them to their preferred contact channel above.`;
 
 export default function ChatPKApp() {
   const [messages, setMessages] = useState<Message[]>([
@@ -125,27 +66,6 @@ export default function ChatPKApp() {
         if (!res.ok) throw new Error(`Backend error: ${res.status}`);
         const data = await res.json();
         reply = data.reply;
-      } else if (GEMINI_API_KEY) {
-        // ── Fallback: direct Gemini (no live RAG) ────────────────────────────
-        const history = messages.slice(-6).map((m) => ({
-          role: m.role,
-          parts: [{ text: m.content }],
-        }));
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${GEMINI_API_KEY}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              system_instruction: { parts: [{ text: FALLBACK_SYSTEM_PROMPT }] },
-              contents: [...history, { role: 'user', parts: [{ text }] }],
-              generationConfig: { maxOutputTokens: 8192, temperature: 0.8 },
-            }),
-          }
-        );
-        if (!res.ok) throw new Error(`Gemini error: ${res.status}`);
-        const data = await res.json();
-        reply = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
       } else {
         reply = "Pai isn't fully configured yet — reach out to Pranav directly at pk.kowadkar@gmail.com.";
       }
