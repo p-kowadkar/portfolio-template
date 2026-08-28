@@ -31,7 +31,7 @@ This portfolio is not a traditional scrolling webpage. It is a **dual-mode inter
 - **Desktop / Tablet (≥ 768px + no touch):** A macOS-inspired environment with a menu bar, draggable and resizable windows, an auto-hiding dock, animated wallpaper, and a boot sequence with audio.
 - **Mobile (< 768px or touch device):** An iOS-style springboard with a live status bar, app icon grid, frosted glass bottom dock, swipe-down notification center, idle lock screen, and PWA support for "Add to Home Screen."
 
-Both modes share the same AI assistant (Pai), project data, and narrative content.
+Both modes share the same AI assistant (AIssistant), project data, and narrative content.
 
 ---
 
@@ -65,8 +65,10 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 
 | App | Description |
 |---|---|
-| **AI Guide (Pai)** | AI assistant powered by OpenRouter + RAG backend. Knows your full background, projects, and story via `journey.txt` + `resume.txt`. Suggested question chips on first open. Requires the backend — `ChatPKApp.tsx`/`MobilePai.tsx` have no client-side fallback by design (see the comment at the top of either file); the actual persona/prompt lives in `backend/main.py`'s `PAI_SYSTEM_PROMPT`. |
-| **Digital Twin (Talk to PK)** | FaceTime-style video call: voice input (Web Speech API) → `/api/chat` (first-person persona) → ElevenLabs TTS in your cloned voice → Simli real-time talking-head avatar lip-syncing over your portrait. Live captions + on-demand transcript. Works as voice-only (no avatar) if Simli isn't configured. Setup: `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` + `SIMLI_API_KEY`/`SIMLI_FACE_ID` in `backend/.env` — see `backend.env.example` for the full walkthrough (voice cloning, avatar creation, timing/cost notes). An optional Supabase-backed rate gate keeps a runaway bill from a public link — see the same file. |
+| **AI Guide (AIssistant)** | AI assistant powered by OpenRouter + RAG backend. Knows your full background, projects, and story via `identity.md` + `journey.txt` + `resume.txt`. Suggested question chips on first open. Requires the backend — `ChatPKApp.tsx`/`MobileAIssistant.tsx` have no client-side fallback by design (see the comment at the top of either file); the actual persona/prompt lives in `backend/main.py`'s `AI_GUIDE_SYSTEM_PROMPT`. Can open Canvas/Scheduler/other apps mid-conversation — see **Tool-calling** below. |
+| **Digital Twin (Talk to PK)** | FaceTime-style video call: voice input (Web Speech API) → `/api/chat` (first-person persona) → ElevenLabs TTS in your cloned voice → Simli real-time talking-head avatar lip-syncing over your portrait. Live captions + on-demand transcript. Works as voice-only (no avatar) if Simli isn't configured. Setup: `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` + `SIMLI_API_KEY`/`SIMLI_FACE_ID` in `backend/.env` — see `backend.env.example` for the full walkthrough (voice cloning, avatar creation, timing/cost notes). An optional Supabase-backed rate gate keeps a runaway bill from a public link — see the same file. Same tool-calling as AIssistant — mid-call it can pull up a project's Canvas or open the Scheduler without breaking character. |
+| **Canvas** | Opens a project's architecture diagram (animated SVG — nodes type in, edges draw after) in its own window. No manual entry point — it only opens via a tool call from AIssistant or the Digital Twin (ask "how does CareerForge work?" or similar). Diagram data lives on each project's `arch` field in `client/src/data/projects.ts`; projects without one get a graceful "not authored yet" placeholder. |
+| **Scheduler** | Embeds your Cal.com public profile page (or any embeddable scheduling page) so a visitor can book time with you. Same as Canvas — tool-call-only, no dock/menu entry. Set your URL in `client/src/components/SchedulerContent.tsx`. |
 | **Projects** | Interactive project browser with tech stack badges, GitHub links, and live demo links. Data in `client/src/data/projects.ts`. |
 | **My Story** | Chapter-based visual timeline. Replace chapter content in `MyStoryApp.tsx`. |
 | **Resume / CV** | Inline resume viewer with PDF download. Replace the PDF in `client/public/data/` and update `CVApp.tsx`. |
@@ -74,6 +76,12 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 | **Contact** | Message form (desktop, `MessagesApp.tsx`) posts to `/api/contact` → Gmail SMTP. Mobile's `MobileContact.tsx` is a static iOS Contacts-style card with mailto/social links instead — update both. |
 | **Haiku** | AI-generated haiku poetry with swipe gestures (mobile) or Konami code (desktop). |
 | **Browser / External app** | External link app — point it at your own product/project URL. |
+
+### Tool-calling
+
+AIssistant and the Digital Twin can both open Canvas, Scheduler, or another app window mid-conversation, via real OpenRouter/OpenAI-style function-calling (`TOOLS` in `backend/main.py` — not a prompt convention, the model actually emits a structured call). Desktop routes it through `WindowActionsContext`/`WindowParamsContext` (any app can call `useOpenWindow()`); mobile routes it through a one-level overlay stack in `MobileShell.tsx` so a tool call during a Digital Twin call opens on top of it without hanging up. The dispatch logic itself (`client/src/lib/toolDispatch.ts`) is shared by all four chat surfaces.
+
+The `open_canvas` tool's project list (`PROJECT_REGISTRY` in `backend/main.py`) is a **manually-kept-in-sync duplicate** of `client/src/data/projects.ts` — there's no shared source of truth between Python and TypeScript, so update both when you add, rename, or remove a project.
 
 ---
 
@@ -129,34 +137,44 @@ portfolio-template/
 │   └── src/
 │       ├── components/
 │       │   ├── apps/                  # Desktop app windows
-│       │   │   ├── ChatPKApp.tsx      # Pai AI chat (desktop)
+│       │   │   ├── ChatPKApp.tsx      # AIssistant AI chat (desktop)
 │       │   │   ├── VideoCallApp.tsx   # Digital Twin "Talk to PK" (desktop)
 │       │   │   ├── ProjectsApp.tsx
 │       │   │   ├── MyStoryApp.tsx
 │       │   │   ├── CVApp.tsx
 │       │   │   ├── TerminalApp.tsx
-│       │   │   └── MessagesApp.tsx    # Contact form (desktop)
+│       │   │   ├── MessagesApp.tsx    # Contact form (desktop)
+│       │   │   ├── CanvasApp.tsx      # Project architecture viewer (desktop, tool-call only)
+│       │   │   └── SchedulerApp.tsx   # Cal.com embed (desktop, tool-call only)
 │       │   ├── mobile/                # iOS mobile shell
 │       │   │   ├── MobileShell.tsx
 │       │   │   ├── MobileIntro.tsx
 │       │   │   ├── LockScreen.tsx
 │       │   │   ├── NotificationCenter.tsx
 │       │   │   └── apps/              # Mobile app screens
-│       │   │       ├── MobilePai.tsx
+│       │   │       ├── MobileAIssistant.tsx
 │       │   │       ├── MobileDigitalTwin.tsx  # Digital Twin (mobile)
 │       │   │       ├── MobileProjects.tsx
 │       │   │       ├── MobileMyStory.tsx
 │       │   │       ├── MobileResume.tsx
 │       │   │       ├── MobileTerminal.tsx
 │       │   │       ├── MobileContact.tsx      # Static contact card (mobile)
-│       │   │       └── MobileHaiku.tsx
+│       │   │       ├── MobileHaiku.tsx
+│       │   │       ├── MobileCanvas.tsx       # Project architecture viewer (mobile, tool-call only)
+│       │   │       └── MobileScheduler.tsx    # Cal.com embed (mobile, tool-call only)
 │       │   ├── Desktop.tsx            # macOS desktop shell
 │       │   ├── MenuBar.tsx            # macOS menu bar
 │       │   ├── Dock.tsx               # macOS dock
 │       │   ├── IntroScreen.tsx        # Boot animation
+│       │   ├── ArchDiagram.tsx        # Shared animated SVG diagram (Projects + Canvas)
+│       │   ├── CanvasContent.tsx      # Shared Canvas content (desktop + mobile wrap this)
+│       │   ├── SchedulerContent.tsx   # Shared Scheduler content (desktop + mobile wrap this)
 │       │   └── HaikuEasterEgg.tsx
+│       ├── contexts/
+│       │   ├── WindowActionsContext.tsx  # Desktop: lets any app call openWindow (tool-calling)
+│       │   └── WindowParamsContext.tsx   # Desktop: lets any app read its own window's params
 │       ├── data/
-│       │   ├── projects.ts            # Shared project data
+│       │   ├── projects.ts            # Shared project data (+ optional arch diagram per project)
 │       │   ├── experience.ts          # Work history (git-graph timeline)
 │       │   └── education.ts           # Education history
 │       ├── hooks/
@@ -166,10 +184,12 @@ portfolio-template/
 │       ├── lib/
 │       │   ├── callAudio.ts           # Digital Twin: TTS playback (backend + browser fallback)
 │       │   ├── callGate.ts            # Digital Twin: client half of the optional rate gate
-│       │   └── identity.ts            # Digital Twin: visitor/session id helpers
+│       │   ├── identity.ts            # Digital Twin: visitor/session id helpers
+│       │   └── toolDispatch.ts        # Shared tool_call -> window-open dispatch (all 4 chat surfaces)
 │       └── App.tsx                    # Root: device detection + routing
 ├── backend/                           # Python FastAPI RAG backend
 │   ├── data/
+│   │   ├── identity.md                # Present-tense "who I am now" — read first (replace this)
 │   │   ├── journey.txt                # Your story (replace this)
 │   │   └── resume.txt                 # Your resume in plain text (replace this)
 │   ├── scripts/
@@ -200,15 +220,18 @@ pnpm install
 
 | File | What to do |
 |---|---|
+| `backend/data/identity.md` | Replace with a short, present-tense "who I am right now" — read first on every chat request, ahead of journey.txt/resume.txt. Cheap to keep current. |
 | `backend/data/journey.txt` | Replace with your story — written in first person, narrative style. This feeds the RAG backend. |
 | `backend/data/resume.txt` | Paste your resume in plain text. Sections: SUMMARY, SKILLS, EXPERIENCE, PROJECTS, ACHIEVEMENTS. |
-| `backend/main.py` — `PAI_SYSTEM_PROMPT` | Third-person persona for the AI Guide (Pai). Update the identity/contact/rules — see the comment style already in the file. |
-| `client/src/data/projects.ts` | Replace with your own projects. |
+| `backend/main.py` — `AI_GUIDE_SYSTEM_PROMPT` | Third-person persona for the AI Guide (AIssistant). Update the identity/contact/rules — see the comment style already in the file. |
+| `backend/main.py` — `PROJECT_REGISTRY` / `TOOLS` | Update the project id/tagline list to match `projects.ts` — this is what lets AIssistant/the Twin open the right project's Canvas. Also update the `open_app` tool's enum if you rename/remove any window ids. |
+| `client/src/data/projects.ts` | Replace with your own projects. Add an `arch` block (nodes/edges — see the CareerForge reference example) to any project you want a Canvas diagram for; it's optional per project. |
 | `client/src/data/experience.ts` | Replace with your own work history. |
 | `client/src/data/education.ts` | Replace with your own education history. |
 | `client/src/components/apps/MyStoryApp.tsx` | Replace chapter content with your own narrative. |
 | `client/public/data/` | Drop in your own images and resume PDF. Update references in `CVApp.tsx` and `experience.ts`. |
-| `backend/main.py` — `DIGITAL_TWIN_PROMPT` | First-person persona for the "Talk to PK" call. Separate from `PAI_SYSTEM_PROMPT`, doesn't share state with it — update both when you change your identity/contact info. |
+| `client/src/components/SchedulerContent.tsx` | Set `CAL_COM_URL` to your own scheduling page. |
+| `backend/main.py` — `DIGITAL_TWIN_PROMPT` | First-person persona for the "Talk to PK" call. Separate from `AI_GUIDE_SYSTEM_PROMPT`, doesn't share state with it — update both when you change your identity/contact info. |
 | `client/src/components/apps/VideoCallApp.tsx` + `mobile/apps/MobileDigitalTwin.tsx` | Set `ANIME_PORTRAIT` to your own reference photo and update the greeting line — see the setup comment at the top of `VideoCallApp.tsx`. Keep both files in sync. |
 
 > **Backend env vars:** See `backend.env.example` for all required variables (OpenRouter key, SMTP credentials, GitHub PAT, ElevenLabs/Simli keys for the Digital Twin, optional Supabase call-rate gate, etc.) — set these on Render under Environment.

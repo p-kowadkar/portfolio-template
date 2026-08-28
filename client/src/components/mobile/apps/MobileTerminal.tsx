@@ -11,18 +11,18 @@ const COMMANDS: Record<string, string> = {
   clear       — clear terminal`,
   whoami: `Pranav Kowadkar
 AI Engineer · Builder · Hackathon Winner
-Based in New Jersey, originally from Belagavi, India.
-Currently: AI Engineer @ NJIT Brain Connectivity Lab`,
+[Your location/journey line goes here]
+Currently: AI Engineer @ ReferenceExperience — NJIT Brain Connectivity Lab`,
   skills: `Languages:   Python, TypeScript, Rust, SQL
 Frameworks:  FastAPI, React, LangChain, n8n
 AI/ML:       Multi-agent systems, RAG, LLMs, RLAIF
 Tools:       Supabase, Docker, Git, ElevenLabs
 Specialty:   Production multi-agent architectures`,
-  hackathons: `🏆 1st Place — Pulse NYC Hackathon
-   Search Sentinel (built in 7hrs during a snowstorm)
+  hackathons: `🎯 Mock Achievement 1: 1st Place — Local Hackathon
+   Mock Project (a one-line description of what you built)
 
-🏆 n8n Sponsor Prize — ElevenLabs Global Hackathon
-   EZ OnCall (voice-first DevOps agent)`,
+🚀 Mock Achievement 2: Speaker — Regional Tech Meetup
+   A one-line description of the talk you gave`,
   contact: `Email:    pk.kowadkar@gmail.com
 LinkedIn: linkedin.com/in/pkowadkar
 GitHub:   github.com/p-kowadkar

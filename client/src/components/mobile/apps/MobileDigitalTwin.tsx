@@ -14,6 +14,16 @@ import { checkCallStart, reportCallEnd, GATE_TIMEOUT_MS, type BlockReason } from
 import { useSimliAvatar } from '@/hooks/useSimliAvatar';
 import { usePersistFn } from '@/hooks/usePersistFn';
 import { useCaptions, captionWindow } from '@/hooks/useCaptions';
+import { dispatchToolCall } from '@/lib/toolDispatch';
+
+// Backend's open_app ids -> mobile's own screen ids. Canvas/scheduler ids
+// already match (both sides use 'canvas'/'scheduler'), so only 'cv' needs
+// translating.
+const APP_ID_TO_MOBILE_SCREEN: Record<string, string> = {
+  projects: 'projects',
+  mystory: 'mystory',
+  cv: 'resume',
+};
 
 // Replace with your own reference photo — see VideoCallApp.tsx for setup notes.
 const ANIME_PORTRAIT = '/data/digital-twin-portrait.png';
@@ -54,7 +64,7 @@ function useCallTimer(active: boolean) {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function MobileDigitalTwin({ onClose }: { onClose: () => void }) {
+export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () => void; onOpenApp?: (id: string, params?: Record<string, unknown>) => void }) {
   const [phase, setPhase] = useState<Phase>('ringing');
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -226,7 +236,18 @@ export default function MobileDigitalTwin({ onClose }: { onClose: () => void }) 
         });
         if (res.status === 429) throw new CallCapReachedError();
         if (!res.ok) throw new Error(`${res.status}`);
-        reply = (await res.json()).reply;
+        const data = await res.json();
+        reply = data.reply;
+        if (data.tool_call && onOpenApp) {
+          dispatchToolCall(data.tool_call, {
+            openCanvas: (project) => onOpenApp('canvas', { project }),
+            openScheduler: () => onOpenApp('scheduler'),
+            openApp: (appId) => {
+              const mobileId = APP_ID_TO_MOBILE_SCREEN[appId];
+              if (mobileId) onOpenApp(mobileId);
+            },
+          });
+        }
       } else {
         reply = "I can't reach my backend right now — drop me a message at pk.kowadkar@gmail.com!";
       }

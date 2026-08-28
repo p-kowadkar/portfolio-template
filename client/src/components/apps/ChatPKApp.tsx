@@ -1,5 +1,5 @@
 // Design: Netflix-dark · macOS chat window aesthetic
-// Pai — Pranav's AI Guide. Routes through backend /api/chat for live RAG (journey + resume + GitHub).
+// AIssistant — Pranav's AI Guide. Routes through backend /api/chat for live RAG (journey + resume + GitHub).
 // Requires VITE_API_URL — there's no client-side fallback by design: the RAG
 // prompt and every API key stay server-side in backend/main.py, never in the
 // client bundle. If you want a "works with zero backend" mode, that's a
@@ -9,6 +9,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send } from 'lucide-react';
+import { dispatchToolCall } from '../../lib/toolDispatch';
+import { useOpenWindow } from '../../contexts/WindowActionsContext';
 
 interface Message {
   role: 'user' | 'model';
@@ -21,13 +23,14 @@ export default function ChatPKApp() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'model',
-      content: "Hey! I'm Pai — Pranav's AI Guide. Ask me anything about his work, projects, or background.",
+      content: "Hey! I'm AIssistant — Pranav's AI Guide. Ask me anything about his work, projects, or background.",
     },
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const openWindow = useOpenWindow();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -66,14 +69,21 @@ export default function ChatPKApp() {
         if (!res.ok) throw new Error(`Backend error: ${res.status}`);
         const data = await res.json();
         reply = data.reply;
+        if (data.tool_call) {
+          dispatchToolCall(data.tool_call, {
+            openCanvas: (project) => openWindow('canvas', { project }),
+            openScheduler: () => openWindow('scheduler'),
+            openApp: (appId) => openWindow(appId),
+          });
+        }
       } else {
-        reply = "Pai isn't fully configured yet — reach out to Pranav directly at pk.kowadkar@gmail.com.";
+        reply = "AIssistant isn't fully configured yet — reach out to Pranav directly at pk.kowadkar@gmail.com.";
       }
 
       if (!reply) throw new Error('Empty reply');
       setMessages((prev) => [...prev, { role: 'model', content: reply }]);
     } catch (err) {
-      console.error('Pai error:', err);
+      console.error('AIssistant error:', err);
       setMessages((prev) => [
         ...prev,
         {
@@ -94,7 +104,7 @@ export default function ChatPKApp() {
         className="flex items-center gap-3 px-4 py-3 shrink-0"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.07)', background: 'rgba(20,20,22,0.8)' }}
       >
-        {/* Pai Avatar */}
+        {/* AIssistant Avatar */}
         <div
           className="flex items-center justify-center shrink-0"
           style={{
@@ -107,12 +117,12 @@ export default function ChatPKApp() {
         >
           <img
             src="https://files.manuscdn.com/user_upload_by_module/session_file/115134064/qFTubXyXITmAffEZ.png"
-            alt="Pai"
+            alt="AIssistant"
             style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 10%' }}
           />
         </div>
         <div>
-          <p style={{ fontSize: '14px', fontWeight: 500, color: '#f0f0f2' }}>Pai</p>
+          <p style={{ fontSize: '14px', fontWeight: 500, color: '#f0f0f2' }}>AIssistant</p>
           <div className="flex items-center gap-1.5">
             <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#30d158', boxShadow: '0 0 6px rgba(48,209,88,0.6)' }} />
             <span style={{ fontFamily: "'DM Mono', monospace", fontSize: '10px', color: '#30d158' }}>online</span>
@@ -148,7 +158,7 @@ export default function ChatPKApp() {
                 >
                   <img
                     src="https://files.manuscdn.com/user_upload_by_module/session_file/115134064/qFTubXyXITmAffEZ.png"
-                    alt="Pai"
+                    alt="AIssistant"
                     style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 10%' }}
                   />
                 </div>
@@ -193,7 +203,7 @@ export default function ChatPKApp() {
             >
               <img
                 src="https://files.manuscdn.com/user_upload_by_module/session_file/115134064/qFTubXyXITmAffEZ.png"
-                alt="Pai"
+                alt="AIssistant"
                 style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 10%' }}
               />
             </div>

@@ -542,7 +542,7 @@ export default function Dock({ windowManager }: DockProps) {
 
   const windowApps: DockApp[] = [
     { id: 'projects', label: 'Projects', icon: <FolderIcon />, action: () => openWindow('projects') },
-    { id: 'chat', label: 'Pai', icon: <ChatIcon />, action: () => openWindow('chat') },
+    { id: 'chat', label: 'AIssistant', icon: <ChatIcon />, action: () => openWindow('chat') },
     { id: 'mystory', label: 'My Story', icon: <MyStoryIcon />, action: () => openWindow('mystory') },
     { id: 'videocall', label: 'Video Call', icon: <VideoIcon />, action: () => openWindow('videocall') },
     { id: 'messages', label: 'Messages', icon: <MailIcon />, action: () => openWindow('messages') },

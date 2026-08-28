@@ -7,7 +7,7 @@ Endpoints:
   GET  /api/health        → UptimeRobot keep-alive ping
   POST /api/contact       → contact form → Gmail SMTP
   GET  /api/haiku         → dynamically generated haikus via RAG (24h cache)
-  POST /api/chat          → Pai / Digital Twin (multi-model OpenRouter fallback)
+  POST /api/chat          → AIssistant / Digital Twin (multi-model OpenRouter fallback)
   POST /api/tts           → ElevenLabs TTS proxy (mp3 or pcm_16000)
   POST /api/simli/session → mints a Simli WebRTC avatar session token
   POST /api/call/start    → Digital Twin call-rate gate (daily/monthly limits, Supabase)
@@ -123,16 +123,16 @@ def load_text(filename: str) -> str:
 _haiku_cache: dict = {"haikus": [], "generated_at": 0}
 
 FALLBACK_HAIKUS = [
-    {"id": "planes",    "lines": ["Fifteen planes take flight", "Balsa wood, midnight solder", "Belagavi dreams"],          "fact": "Built 15 RC planes + 4 quadcopters from scratch in college", "emoji": "✈️"},
-    {"id": "parasail",  "lines": ["First paycheck arrives", "Twenty-two engineers soar", "Parasailing joy"],                "fact": "Celebrated first Cognizant paycheck by parasailing with 22 colleagues", "emoji": "🪂"},
-    {"id": "scuba",     "lines": ["Underwater calm", "Fluid dynamics, felt not", "Dassault taught me this"],               "fact": "First scuba dive was a Dassault team event — experienced aerodynamics viscerally", "emoji": "🤿"},
-    {"id": "goa",       "lines": ["Goa, four hours south", "Debug code on the beach", "Sunset clears the mind"],           "fact": "Regular Goa trips with the Belagavi crew — best debugging sessions happened on the beach", "emoji": "🏖️"},
-    {"id": "anime",     "lines": ["Steins;Gate reruns", "Ghost in the Shell at 2 AM", "AI dreams take shape"],             "fact": "Steins;Gate & Ghost in the Shell directly influenced his AI philosophy", "emoji": "📺"},
-    {"id": "workshop",  "lines": ["Seventy-two hours", "Seventy-two engineers", "Belagavi wakes"],                         "fact": "First RC plane workshop: 72 registrations in 72 hours — had to close signups", "emoji": "🛠️"},
-    {"id": "stirling",  "lines": ["Heat becomes motion", "Stirling engine, half-built, proud", "Theory made real"],        "fact": "Built a Stirling engine in college — theoretically possible, practically challenging", "emoji": "⚙️"},
-    {"id": "gre",       "lines": ["Pune, 2 AM", "Secret tricks for GRE math", "Students line the hall"],                   "fact": "Became so good at GRE math in Pune that students lined up for his tips", "emoji": "📐"},
-    {"id": "newark",    "lines": ["Two suitcases packed", "Newark fog, September cold", "Dreams weigh nothing here"],       "fact": "Arrived in Newark with two suitcases and a scholarship — September 2022", "emoji": "🌁"},
-    {"id": "sentinel",  "lines": ["Seven hours, one night", "Search Sentinel wins first place", "Snowstorm, NYC"],         "fact": "Built Search Sentinel in 7 hours during a NYC snowstorm — won 1st place at Pulse NYC", "emoji": "🏆"},
+    {"id": "placeholder-funny",       "lines": ["Haiku one right here", "Something funny about you", "Edit me — go on"],       "fact": "Haiku1: Something funny about you.", "emoji": "😄"},
+    {"id": "placeholder-insightful",  "lines": ["Haiku two waits here", "Something insightful and true", "Your own quiet truth"], "fact": "Haiku2: Something insightful about you.", "emoji": "💡"},
+    {"id": "placeholder-achievement", "lines": ["Haiku three, a win", "Something you're proud you built", "Name your own triumph"], "fact": "Haiku3: A personal achievement.", "emoji": "🏆"},
+    {"id": "placeholder-hobby",       "lines": ["Haiku four, a hobby", "Something you love outside work", "What lights you up most"], "fact": "Haiku4: A hobby or passion.", "emoji": "🎨"},
+    {"id": "placeholder-place",       "lines": ["Haiku five, a place", "Somewhere that shaped who you are", "Your own origin"],  "fact": "Haiku5: A place that shaped you.", "emoji": "🌍"},
+    {"id": "placeholder-milestone",   "lines": ["Haiku six, a big leap", "A moment you took the risk", "Your own turning point"], "fact": "Haiku6: A milestone or turning point.", "emoji": "🚀"},
+    {"id": "placeholder-habit",       "lines": ["Haiku seven, quirk", "A small habit, oddly yours", "Nobody else's"],           "fact": "Haiku7: A quirky habit.", "emoji": "🔧"},
+    {"id": "placeholder-people",      "lines": ["Haiku eight, a name", "Someone who shaped how you think", "Say thanks in a line"], "fact": "Haiku8: A person who shaped you.", "emoji": "🤝"},
+    {"id": "placeholder-curiosity",   "lines": ["Haiku nine, a spark", "The question you can't let go", "Chase it in five-sev-five"], "fact": "Haiku9: A curiosity or obsession.", "emoji": "🔭"},
+    {"id": "placeholder-dream",       "lines": ["Haiku ten, a wish", "Something you're building toward", "Not there yet — still going"], "fact": "Haiku10: A dream or goal.", "emoji": "✨"},
 ]
 
 
@@ -143,11 +143,16 @@ async def call_openrouter(
     temperature: float = 0.8,
     max_tokens: int = 8192,
     response_format: dict | None = None,
+    tools: list[dict] | None = None,
     timeout: float = 45.0,
-) -> str:
+) -> tuple[str, list[dict] | None]:
     """
     Call OpenRouter with the given model and messages.
-    Returns the assistant's text content.
+    Returns (content, tool_calls) — tool_calls is the raw OpenAI-shaped
+    message.tool_calls array when the model invoked one, else None. Only
+    models with native function-calling support will ever populate it; a
+    model that doesn't understand `tools` just ignores it and answers in
+    plain text.
     Raises httpx.HTTPStatusError or Exception on failure.
     """
     if not OPENROUTER_API_KEY:
@@ -168,6 +173,8 @@ async def call_openrouter(
     }
     if response_format:
         payload["response_format"] = response_format
+    if tools:
+        payload["tools"] = tools
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(OPENROUTER_BASE, headers=headers, json=payload)
@@ -175,7 +182,8 @@ async def call_openrouter(
         data = resp.json()
 
     # OpenRouter returns OpenAI-compatible response
-    return data["choices"][0]["message"]["content"]
+    message = data["choices"][0]["message"]
+    return message.get("content") or "", message.get("tool_calls")
 
 
 async def call_with_fallback(
@@ -184,27 +192,29 @@ async def call_with_fallback(
     temperature: float = 0.8,
     max_tokens: int = 8192,
     response_format: dict | None = None,
+    tools: list[dict] | None = None,
     timeout: float = 45.0,
-) -> tuple[str, str]:
+) -> tuple[str, str, list[dict] | None]:
     """
     Try each model in model_list until one succeeds.
-    Returns (content, model_used).
+    Returns (content, model_used, tool_calls).
     Raises RuntimeError if all models fail.
     """
     last_error = None
     for model in model_list:
         try:
             logger.info(f"Trying model: {model}")
-            content = await call_openrouter(
+            content, tool_calls = await call_openrouter(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 response_format=response_format,
+                tools=tools,
                 timeout=timeout,
             )
             logger.info(f"Success with model: {model}")
-            return content, model
+            return content, model, tool_calls
         except Exception as e:
             logger.warning(f"Model {model} failed: {type(e).__name__}: {e}")
             last_error = e
@@ -447,7 +457,7 @@ No markdown, no explanation, no code blocks — raw JSON array only."""
     messages = [{"role": "user", "content": prompt}]
 
     try:
-        raw, model_used = await call_with_fallback(
+        raw, model_used, _ = await call_with_fallback(
             model_list=HAIKU_MODELS,
             messages=messages,
             temperature=0.9,
@@ -558,7 +568,72 @@ async def get_haikus(refresh: bool = False):
         }
 
 
-# ─── Pai Chat endpoint ────────────────────────────────────────────────────────
+# ─── Tool-calling (Canvas / Scheduler) ─────────────────────────────────────────
+# Native OpenAI-compatible function-calling via OpenRouter's `tools` field —
+# not a JSON-in-prompt convention. Requires the chat model to actually support
+# tool calls; CHAT_MODELS below is chosen with that in mind. A model that
+# doesn't support it just never populates tool_calls, and the reply degrades
+# to plain text — no special handling needed for that case.
+#
+# PROJECT_REGISTRY is a manually-kept-in-sync duplicate of the project ids in
+# client/src/data/projects.ts — there's no shared source of truth between
+# Python and TypeScript here, so when you add/rename/remove a project, update
+# both. Keep each tagline to one line; it's what the model sees when deciding
+# which project to open.
+PROJECT_REGISTRY = [
+    {"id": "mock-project-1", "tagline": "AI-powered recipe suggestions from what's in your fridge"},
+    {"id": "mock-project-2", "tagline": "A terminal-first habit tracker with streak visualization"},
+    {"id": "careerforge", "tagline": "End-to-end AI job application automation"},
+]
+_PROJECT_IDS = [p["id"] for p in PROJECT_REGISTRY]
+_PROJECT_ENUM_DESCRIPTION = "\n".join(f"- {p['id']}: {p['tagline']}" for p in PROJECT_REGISTRY)
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "open_canvas",
+            "description": (
+                "Open a visual Canvas panel showing a project's architecture diagram. "
+                "Use this when the visitor asks how a specific project works, its architecture, "
+                "or wants to see it visually — not for a general project overview, which you can "
+                "just describe in words.\n\nAvailable projects:\n" + _PROJECT_ENUM_DESCRIPTION
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "enum": _PROJECT_IDS, "description": "The project id to show."},
+                },
+                "required": ["project"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_scheduler",
+            "description": "Open the scheduling panel so the visitor can book a call. Use when they ask to schedule a meeting, book a call, or find a time to talk.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_app",
+            "description": "Open another app window in the portfolio for the visitor — e.g. to show the full project list, the story timeline, or the resume.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "app_id": {"type": "string", "enum": ["projects", "mystory", "cv"], "description": "Which app to open."},
+                },
+                "required": ["app_id"],
+            },
+        },
+    },
+]
+
+
+# ─── AIssistant Chat endpoint ─────────────────────────────────────────────────
 class ChatMessage(BaseModel):
     role: str  # "user" or "model"
     content: str
@@ -566,15 +641,15 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = []
-    persona: str = "pai"  # "pai" (default, third-person guide) or "digital_twin" (first-person)
+    persona: str = "guide"  # "guide" (default, third-person guide) or "digital_twin" (first-person)
 
-PAI_SYSTEM_PROMPT = """🎬 You are Pai — Pranav Kowadkar's AI Guide, embedded in his portfolio.
+AI_GUIDE_SYSTEM_PROMPT = """🎬 You are AIssistant — Pranav Kowadkar's AI Guide, embedded in his portfolio.
 You are a vivid, articulate narrator of his professional journey. Speak with cinematic clarity,
 grounded confidence, and human warmth. You are NOT Pranav himself — you are his assistant,
 always speaking in third person about Pranav.
 
 IDENTITY: If addressed as "Pranav" or asked if you ARE Pranav, respond:
-"I'm Pai — Pranav's AI Guide. Let's explore his journey together."
+"I'm AIssistant — Pranav's AI Guide. Let's explore his journey together."
 
 Always speak in third person. Never impersonate Pranav. Never say "I" when referring to
 Pranav's experiences. Never robotic. Never start responses with "Certainly!" or "Great question!"
@@ -597,8 +672,8 @@ EASTER EGGS:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DIGITAL TWIN PROMPT — powers "Talk to PK" (VideoCallApp.tsx / MobileDigitalTwin.tsx).
-# Same RAG context as Pai above, but a completely different voice: first person,
-# call-style, never breaks character. Keep this in sync with PAI_SYSTEM_PROMPT
+# Same RAG context as AIssistant above, but a completely different voice: first person,
+# call-style, never breaks character. Keep this in sync with AI_GUIDE_SYSTEM_PROMPT
 # when you update your own identity/contact details — they're two separate
 # strings, nothing shares state between them.
 #
@@ -647,7 +722,7 @@ CRITICAL RULES:
 @app.post("/api/chat")
 async def chat(req: ChatRequest, x_call_session_id: str | None = Header(default=None, alias="X-Call-Session-Id")):
     """
-    Pai (third-person guide) or the Digital Twin (first-person), selected by
+    AIssistant (third-person guide) or the Digital Twin (first-person), selected by
     req.persona. Both do live RAG over journey doc, master resume, and GitHub
     activity, and use the same OpenRouter multi-model fallback chain.
     """
@@ -656,12 +731,16 @@ async def chat(req: ChatRequest, x_call_session_id: str | None = Header(default=
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=503, detail="AI service not configured")
 
-    # Build live context from all sources
-    journey = load_text("journey.txt")
-    resume  = load_text("resume.txt")
-    github  = await fetch_github_context()
+    # Build live context from all sources. identity.md goes first — a short,
+    # present-tense "who I am right now" manifest that's cheap to keep current,
+    # unlike journey.txt/resume.txt which you'll update far less often.
+    identity = load_text("identity.md")
+    journey  = load_text("journey.txt")
+    resume   = load_text("resume.txt")
+    github   = await fetch_github_context()
 
     context = "\n\n".join(filter(None, [
+        f"=== IDENTITY — READ THIS FIRST ===\n{identity}",
         f"=== PRANAV'S JOURNEY (complete) ===\n{journey[:25000]}",
         f"=== MASTER RESUME ===\n{resume[:8000]}",
         f"=== GITHUB ACTIVITY (live) ===\n{github[:4000]}",
@@ -671,7 +750,7 @@ async def chat(req: ChatRequest, x_call_session_id: str | None = Header(default=
     if req.persona == "digital_twin":
         system_with_context = f"{DIGITAL_TWIN_PROMPT}\n\n{context}"
     else:
-        system_with_context = f"{PAI_SYSTEM_PROMPT}\n\n{context}"
+        system_with_context = f"{AI_GUIDE_SYSTEM_PROMPT}\n\n{context}"
 
     # Build OpenAI-compatible message list (system + history + new message)
     # Convert "model" role (Gemini convention) → "assistant" (OpenAI convention)
@@ -682,20 +761,30 @@ async def chat(req: ChatRequest, x_call_session_id: str | None = Header(default=
     messages.append({"role": "user", "content": req.message})
 
     try:
-        reply, model_used = await call_with_fallback(
+        reply, model_used, tool_calls = await call_with_fallback(
             model_list=CHAT_MODELS,
             messages=messages,
             temperature=0.8,
             max_tokens=8192,
+            tools=TOOLS,
             timeout=45.0,
         )
         logger.info(f"Chat response from: {model_used}")
-        return {"reply": reply, "model": model_used}
+        result: dict = {"reply": reply, "model": model_used}
+        # Only the first tool call is surfaced even if the model emits several —
+        # one visual action per turn keeps the UI predictable.
+        if tool_calls:
+            try:
+                func = tool_calls[0]["function"]
+                result["tool_call"] = {"name": func["name"], "arguments": json.loads(func.get("arguments") or "{}")}
+            except (KeyError, json.JSONDecodeError) as e:
+                logger.warning(f"Malformed tool call from model, ignoring: {e}")
+        return result
     except Exception as e:
         logger.error(f"Chat error across all models: {e}")
         raise HTTPException(
             status_code=500,
-            detail="Pai is having trouble connecting. All models are currently unavailable — try again shortly."
+            detail="AIssistant is having trouble connecting. All models are currently unavailable — try again shortly."
         )
 
 

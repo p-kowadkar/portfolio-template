@@ -57,6 +57,8 @@ import { checkCallStart, reportCallEnd, GATE_TIMEOUT_MS, type BlockReason } from
 import { useSimliAvatar } from '@/hooks/useSimliAvatar';
 import { usePersistFn } from '@/hooks/usePersistFn';
 import { useCaptions, captionWindow } from '@/hooks/useCaptions';
+import { dispatchToolCall } from '@/lib/toolDispatch';
+import { useOpenWindow } from '@/contexts/WindowActionsContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 // Replace with your own reference photo — see the setup note above.
@@ -136,6 +138,7 @@ export default function VideoCallApp() {
   const callSessionIdRef = useRef<string>('');
   const avatar = useSimliAvatar({ onSpeakingChange: setSpeaking });
   const captions = useCaptions(speaking);
+  const openWindow = useOpenWindow();
   const connectStartedRef = useRef(0);
   const beganActiveRef = useRef(false);
   // true = nothing to report to /api/call/end (no server row exists for this call)
@@ -377,6 +380,13 @@ export default function VideoCallApp() {
         if (!res.ok) throw new Error(`Backend ${res.status}`);
         const data = await res.json();
         reply = data.reply;
+        if (data.tool_call) {
+          dispatchToolCall(data.tool_call, {
+            openCanvas: (project) => openWindow('canvas', { project }),
+            openScheduler: () => openWindow('scheduler'),
+            openApp: (appId) => openWindow(appId),
+          });
+        }
       } else {
         reply = "I can't reach my backend right now — drop me a message at pk.kowadkar@gmail.com!";
       }

@@ -11,105 +11,41 @@ const CHAPTERS = [
   {
     id: "ch1",
     number: "01",
-    title: "The Boy Who Built Wings",
-    subtitle: "Belagavi, Karnataka · 2000–2014",
-    image:
-      "https://files.manuscdn.com/user_upload_by_module/session_file/115134064/EPpvubJEovqNLORM.webp",
+    title: "Reference Chapter: Where It Started",
+    subtitle: "[Your City, Country] · [Years]",
+    image: "/data/mystory-reference.svg",
     pullQuote:
-      "\"Every RC plane I built was a proof of concept — that with enough patience and the right components, anything could fly.\"",
+      "\"This is a pull quote — pull the single most striking line from the chapter and drop it here for visual impact.\"",
     body: [
-      "In a small workshop in Belagavi, Karnataka, a teenager surrounded by balsa wood, copper wire, and circuit boards was quietly becoming an engineer. Before the textbooks, before the degrees, before the algorithms — there were 15 hand-built RC planes.",
-      "Each one was a complete engineering project: aerodynamics calculated by hand, electronics soldered at midnight, test flights conducted in the fields outside the city. When one crashed, Pranav didn't see failure — he saw data. What went wrong? What needed to change? How could the next version fly higher?",
-      "This obsession with building things that worked — really worked, not just in theory — would define everything that followed. The discipline of iterating through failure, the joy of watching something you made with your own hands actually take flight: these weren't just hobbies. They were the foundation of an engineering philosophy.",
-      "Belagavi gave Pranav something that no curriculum could: the confidence to build from scratch, the patience to debug the physical world, and the hunger to understand not just how things work, but why they work — and how to make them work better.",
+      "This is a reference chapter showing the shape and pacing of a good My Story chapter. Open with a scene: a specific place, a specific memory, something concrete that grounds the reader before you zoom out.",
+      "The second paragraph usually builds context — what you were doing during this period, what it taught you, what skills or instincts you picked up along the way.",
+      "The third paragraph often pivots toward the 'why' — the throughline connecting this chapter to the ones that follow. What question were you chasing? What was starting to change?",
+      "The final paragraph closes the chapter and sets up the next one. End with momentum, not a full stop — the reader should want to click 'Next chapter.'",
     ],
     stats: [
-      { label: "RC Planes Built", value: "15" },
-      { label: "Years of Tinkering", value: "8+" },
-      { label: "First Flight", value: "Age 12" },
+      { label: "Example Stat", value: "X" },
+      { label: "Example Stat", value: "Y" },
+      { label: "Example Stat", value: "Z" },
     ],
   },
   {
     id: "ch2",
     number: "02",
-    title: "National Skies",
-    subtitle: "NAL Bangalore & Cognizant · 2015–2021",
-    image:
-      "https://files.manuscdn.com/user_upload_by_module/session_file/115134064/ZorbHUZjDugTBIlU.webp",
+    title: "Reference Chapter: What Changed",
+    subtitle: "[Your Next Chapter] · [Years]",
+    image: "/data/mystory-reference.svg",
     pullQuote:
-      "\"Working on India's VTOL UAV program wasn't just a job — it was proof that the kid who built RC planes in Belagavi belonged in a national laboratory.\"",
+      "\"A second pull quote — chapters read best when each one has its own turning point.\"",
     body: [
-      "The boy who built RC planes grew into an engineer who built UAVs for India's national aerospace program. At the National Aerospace Laboratories (NAL) in Bangalore, Pranav contributed to the VTOL unmanned aerial vehicle project — real aircraft, real stakes, real national significance.",
-      "The transition from hobbyist to professional was jarring in the best way. At NAL, every decision had to be documented, justified, and reviewed. The informal intuition of the workshop gave way to rigorous engineering discipline. But the core remained the same: understand the physics, build the system, test it until it works.",
-      "From aerospace to enterprise: Cognizant offered a different kind of scale. As a Programmer Analyst, Pranav built automation frameworks that processed millions of records, designed data pipelines that reduced manual effort by 70%, and discovered that the same problem-solving instincts that made RC planes fly could make enterprise software sing.",
-      "These years in India weren't just career steps — they were the crucible where technical skill met professional discipline. The question that kept surfacing: what happens when you combine this engineering foundation with the cutting edge of AI? The answer would require crossing an ocean to find out.",
+      "Use later chapters to show progression — a new role, a new place, a new problem you decided to go solve. Each chapter should feel like a distinct beat in the story, not a repeat of the last one.",
+      "Ground it in specifics: numbers, dates, names of things you built or shipped. Concrete details are what make a story feel real instead of generic.",
+      "If this is your most recent chapter, this is a good place to explain what you're building now and why — the reader's last impression before they go look at your projects or reach out.",
+      "Add as many chapters as you want — the layout, timeline sidebar, and navigation are all fully data-driven from the CHAPTERS array above, so extending this to 3, 5, or more chapters is just adding more entries.",
     ],
     stats: [
-      { label: "UAV Programs", value: "2" },
-      { label: "Automation Savings", value: "70%" },
-      { label: "Years in Industry", value: "4" },
-    ],
-  },
-  {
-    id: "ch3",
-    number: "03",
-    title: "The American Chapter",
-    subtitle: "NJIT, New Jersey · 2022–2024",
-    image:
-      "https://files.manuscdn.com/user_upload_by_module/session_file/115134064/smKaeSfYJyAgcwnU.jpg",
-    pullQuote:
-      "\"Landing in Newark with a suitcase and a GRE score, I had no idea that the hardest part wasn't the coursework — it was learning to think differently about everything.\"",
-    body: [
-      "The GRE score was 320. The IELTS was 7.5. The acceptance letter from NJIT's Ying Wu College of Computing arrived on a Tuesday. Pranav Kowadkar was going to America.",
-      "The Master of Science in Data Science program at NJIT was rigorous in ways that surprised even someone who had worked at NAL. The coursework in machine learning, deep learning, and NLP wasn't just theoretical — it demanded that students build systems that actually worked, at scale, under constraints.",
-      "The academic environment was electric. Surrounded by researchers pushing the boundaries of AI, Pranav absorbed not just techniques but ways of thinking: how to frame a problem as a research question, how to evaluate solutions rigorously, how to communicate complex ideas clearly. The GPA of 3.6/4.0 reflected consistent excellence across courses that included Big Data, Computer Vision, and Advanced Database Systems.",
-      "But the most important education happened outside the classroom. Part-time work developing DNNs and RAG pipelines for clients taught Pranav what academia couldn't: how real organizations actually use AI, what breaks in production, and how to bridge the gap between research and deployment. By graduation in 2024, the theoretical and practical had fused into something rare — deep expertise with real-world judgment.",
-    ],
-    stats: [
-      { label: "GPA", value: "3.6/4.0" },
-      { label: "GRE Score", value: "320" },
-      { label: "Graduation", value: "2024" },
-    ],
-  },
-  {
-    id: "ch4",
-    number: "04",
-    title: "Building the Future",
-    subtitle: "Silicon Valley & Beyond · 2024–Present",
-    image:
-      "https://files.manuscdn.com/user_upload_by_module/session_file/115134064/MrKOyokDzaseVyYq.webp",
-    pullQuote:
-      "\"The job market was broken. So I stopped trying to navigate it and started building the tools to fix it — for myself and for everyone else.\"",
-    body: [
-      "Graduating with a Master's in Data Science from NJIT in 2024 should have opened every door. The credentials were strong. The skills were real. The timing, however, was complicated.",
-      "The AI job market in 2024 was a paradox: companies claimed they desperately needed AI talent while simultaneously running hiring processes that filtered out exactly the kind of independent, creative builders who could actually deliver results. The ATS black hole swallowed applications. The interview process tested algorithm memorization instead of AI judgment. The experience paradox demanded 3-5 years of experience in technologies that barely existed.",
-      "Rather than being defeated by this, Pranav did what engineers do: he analyzed the system, identified the failure modes, and started building solutions. CareerForge Agent was born from this frustration — an AI-powered career development platform that actually served job seekers instead of recruiters. Prima emerged from the desire for an open-source AI assistant that could operate with complete privacy. GPT-Unbound addressed the context limitation that made every AI conversation feel like starting from scratch.",
-      "The home laboratory in Harrison became a 24/7 development environment. Client work on DNN and RAG systems funded the research. Hackathon wins validated the ideas. And slowly, the portfolio of projects that began as solutions to personal frustrations evolved into something larger: a vision for how AI could genuinely augment human capability without compromising privacy, autonomy, or creativity. The story isn't over. It's just getting interesting.",
-    ],
-    stats: [
-      { label: "AI Projects Built", value: "6+" },
-      { label: "Hackathon Wins", value: "3" },
-      { label: "Status", value: "Building" },
-    ],
-  },
-  {
-    id: "ch5",
-    number: "05",
-    title: "Speaking to the World",
-    subtitle: "LLM Day NYC · March 6, 2026",
-    image: "https://files.manuscdn.com/user_upload_by_module/session_file/115134064/fzToKMmHAGPjKXfc.jpg",
-    pullQuote:
-      '"Production AI systems don\'t fail because of bad models. They fail because of bad architecture. Multi-agent orchestration is how you fix that."',
-    body: [
-      "On March 6, 2026, Pranav took the stage at LLM Day NYC to deliver a talk titled \"Multi-Agent Architectures: Solving Production LLM Reliability at Scale.\" The room was packed with engineers, researchers, and founders who had all hit the same wall: production LLM systems that looked brilliant in demos and fell apart in the real world.",
-      "The core argument was deceptively simple. Production LLM systems face impossible tradeoffs — latency vs accuracy, cost vs quality, speed vs reliability. Single-model architectures force you to pick one and sacrifice the others. Multi-agent architectures dissolve the tradeoff entirely by decomposing tasks, routing intelligently, and using peer review between agents to catch errors before they reach users.",
-      "The talk covered the full spectrum of orchestration patterns: Hierarchical agents where a coordinator delegates to specialists; Collaborative networks where agents debate and converge on answers; Sequential pipelines where each agent refines the previous output; and Hybrid architectures that combine all three depending on task complexity. Central to each pattern was the LLM-as-Judge technique — using one model to evaluate and critique another's output, implementing RLAIF (Reinforcement Learning from AI Feedback) without the cost of human annotation.",
-      "The most technically dense section covered RLVR-inspired implementations: grounding agents with truth documents as reference anchors, building RAG pipelines that agents use not just for retrieval but for self-correction, and designing A2A (Agent-to-Agent) communication protocols that prevent cascading hallucinations. Attendees left with patterns they could implement immediately — not theoretical frameworks, but battle-tested architectures drawn from real production systems.",
-    ],
-    stats: [
-      { label: "Event", value: "LLM Day NYC" },
-      { label: "Date", value: "March 6, 2026" },
-      { label: "Topic", value: "Multi-Agent AI" },
+      { label: "Example Stat", value: "X" },
+      { label: "Example Stat", value: "Y" },
+      { label: "Example Stat", value: "Z" },
     ],
   },
 ];
@@ -362,7 +298,7 @@ export default function MyStoryApp() {
                     The story continues.
                   </p>
                   <p className="text-[13px] text-[#a3a3a3] mb-6 max-w-[400px] mx-auto">
-                    From Belagavi to Bangalore to New Jersey to wherever the next chapter leads — the same drive that built 15 RC planes is now building AI systems that matter.
+                    Wherever your story starts, this is the shape it can take — chapters that build on each other, leading somewhere.
                   </p>
                   <div className="flex gap-3 justify-center">
                     <a

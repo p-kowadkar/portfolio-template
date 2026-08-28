@@ -1,0 +1,6 @@
+<svg viewBox="0 0 1200 600" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="600" fill="#0a0a0a"/>
+  <rect x="30" y="30" width="1140" height="540" rx="16" fill="none" stroke="#3a3a3c" stroke-width="2" stroke-dasharray="12 10"/>
+  <text x="600" y="290" font-family="'DM Serif Display', Georgia, serif" font-style="italic" font-size="44" fill="#e5484d" text-anchor="middle">Reference Chapter</text>
+  <text x="600" y="335" font-family="'DM Mono', monospace" font-size="16" fill="#8e8e93" text-anchor="middle">Replace with your own chapter photo</text>
+</svg>

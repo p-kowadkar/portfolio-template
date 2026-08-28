@@ -1,4 +1,4 @@
-// MobilePai — iOS Messages-style chat interface for Pai
+// MobileAIssistant — iOS Messages-style chat interface for AIssistant
 // Design: Dark maroon/black, iMessage-style bubbles, iOS keyboard behavior
 // Requires VITE_API_URL — no client-side fallback by design, see ChatPKApp.tsx
 // (desktop) for the full rationale: the RAG prompt and every API key stay
@@ -6,6 +6,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, ChevronLeft } from 'lucide-react';
+import { dispatchToolCall } from '../../../lib/toolDispatch';
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
@@ -20,9 +21,18 @@ const SUGGESTED = [
   "How did he get into AI?",
 ];
 
-const PAI_AVATAR = 'https://files.manuscdn.com/user_upload_by_module/session_file/115134064/qFTubXyXITmAffEZ.png';
+const AI_AVATAR = 'https://files.manuscdn.com/user_upload_by_module/session_file/115134064/qFTubXyXITmAffEZ.png';
 
-export default function MobilePai({ onClose }: { onClose: () => void }) {
+// Backend's open_app ids -> mobile's own screen ids. Canvas/scheduler ids
+// already match (both sides use 'canvas'/'scheduler'), so only 'cv' needs
+// translating.
+const APP_ID_TO_MOBILE_SCREEN: Record<string, string> = {
+  projects: 'projects',
+  mystory: 'mystory',
+  cv: 'resume',
+};
+
+export default function MobileAIssistant({ onClose, onOpenApp }: { onClose: () => void; onOpenApp?: (id: string, params?: Record<string, unknown>) => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -54,6 +64,16 @@ export default function MobilePai({ onClose }: { onClose: () => void }) {
         if (res.ok) {
           const data = await res.json();
           reply = data.reply || data.message || data.response || '';
+          if (data.tool_call && onOpenApp) {
+            dispatchToolCall(data.tool_call, {
+              openCanvas: (project) => onOpenApp('canvas', { project }),
+              openScheduler: () => onOpenApp('scheduler'),
+              openApp: (appId) => {
+                const mobileId = APP_ID_TO_MOBILE_SCREEN[appId];
+                if (mobileId) onOpenApp(mobileId);
+              },
+            });
+          }
         }
       }
       if (!reply) {
@@ -77,11 +97,11 @@ export default function MobilePai({ onClose }: { onClose: () => void }) {
         </button>
         <div className="flex items-center gap-3 flex-1">
           <div className="relative">
-            <img src={PAI_AVATAR} alt="Pai" className="w-9 h-9 rounded-full object-cover" />
+            <img src={AI_AVATAR} alt="AIssistant" className="w-9 h-9 rounded-full object-cover" />
             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-400 rounded-full border-2 border-[#0a0a0a]" />
           </div>
           <div>
-            <p className="text-white font-semibold text-sm">Pai</p>
+            <p className="text-white font-semibold text-sm">AIssistant</p>
             <p className="text-green-400 text-[11px]">Pranav's AI Guide · online</p>
           </div>
         </div>
@@ -91,9 +111,9 @@ export default function MobilePai({ onClose }: { onClose: () => void }) {
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {/* Greeting */}
         <div className="flex gap-2 items-end">
-          <img src={PAI_AVATAR} alt="Pai" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+          <img src={AI_AVATAR} alt="AIssistant" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
           <div className="max-w-[78%] rounded-2xl rounded-bl-sm px-4 py-2.5" style={{ background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.9)', fontSize: '14px', lineHeight: 1.5 }}>
-            Hey! I'm Pai — Pranav's AI Guide. Ask me anything about his work, projects, or background.
+            Hey! I'm AIssistant — Pranav's AI Guide. Ask me anything about his work, projects, or background.
           </div>
         </div>
 
@@ -125,7 +145,7 @@ export default function MobilePai({ onClose }: { onClose: () => void }) {
             className={`flex gap-2 items-end ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
           >
             {msg.role === 'model' && (
-              <img src={PAI_AVATAR} alt="Pai" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+              <img src={AI_AVATAR} alt="AIssistant" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
             )}
             <div
               className="max-w-[78%] rounded-2xl px-4 py-2.5"
@@ -146,7 +166,7 @@ export default function MobilePai({ onClose }: { onClose: () => void }) {
         {/* Loading dots */}
         {loading && (
           <div className="flex gap-2 items-end">
-            <img src={PAI_AVATAR} alt="Pai" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+            <img src={AI_AVATAR} alt="AIssistant" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
             <div className="rounded-2xl rounded-bl-sm px-4 py-3" style={{ background: 'rgba(255,255,255,0.1)' }}>
               <div className="flex gap-1">
                 {[0, 1, 2].map((i) => (

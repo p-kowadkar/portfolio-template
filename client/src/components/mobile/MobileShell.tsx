@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import MobilePai from './apps/MobilePai';
+import MobileAIssistant from './apps/MobileAIssistant';
 import MobileProjects from './apps/MobileProjects';
 import MobileMyStory from './apps/MobileMyStory';
 import MobileResume from './apps/MobileResume';
@@ -12,6 +12,8 @@ import MobileTerminal from './apps/MobileTerminal';
 import MobileContact from './apps/MobileContact';
 import MobileHaiku from './apps/MobileHaiku';
 import MobileDigitalTwin from './apps/MobileDigitalTwin';
+import MobileCanvas from './apps/MobileCanvas';
+import MobileScheduler from './apps/MobileScheduler';
 import NotificationCenter from './NotificationCenter';
 import LockScreen, { useIdleLock } from './LockScreen';
 
@@ -20,7 +22,15 @@ const WALLPAPER = 'https://files.manuscdn.com/user_upload_by_module/session_file
 const PROFILE_PHOTO = 'https://files.manuscdn.com/user_upload_by_module/session_file/115134064/UqpYnDLTsOlaAVmS.png';
 
 // ── App registry ─────────────────────────────────────────────────────────────
-type AppId = 'pai' | 'projects' | 'mystory' | 'resume' | 'terminal' | 'contact' | 'haiku' | 'digitaltwin' | 'github' | 'linkedin' | 'telegram' | 'careerforge';
+type AppId = 'pai' | 'projects' | 'mystory' | 'resume' | 'terminal' | 'contact' | 'haiku' | 'digitaltwin' | 'canvas' | 'scheduler' | 'github' | 'linkedin' | 'telegram' | 'careerforge';
+
+// Canvas/scheduler ids arrive as plain strings from a tool call (crossed a
+// prop boundary typed as string, not AppId) — validated here rather than
+// trusted before being used to open an overlay screen.
+const ALL_APP_IDS: readonly AppId[] = ['pai', 'projects', 'mystory', 'resume', 'terminal', 'contact', 'haiku', 'digitaltwin', 'canvas', 'scheduler', 'github', 'linkedin', 'telegram', 'careerforge'];
+function isAppId(id: string): id is AppId {
+  return (ALL_APP_IDS as readonly string[]).includes(id);
+}
 
 interface AppDef {
   id: AppId;
@@ -30,12 +40,12 @@ interface AppDef {
 }
 
 // ── SVG Icons (iOS-style, matching desktop quality) ──────────────────────────
-function PaiIcon() {
+function AIssistantIcon() {
   return (
     <svg viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-      <rect width="60" height="60" rx="13" fill="url(#pai_grad)"/>
+      <rect width="60" height="60" rx="13" fill="url(#ai_grad)"/>
       <defs>
-        <linearGradient id="pai_grad" x1="0" y1="0" x2="60" y2="60" gradientUnits="userSpaceOnUse">
+        <linearGradient id="ai_grad" x1="0" y1="0" x2="60" y2="60" gradientUnits="userSpaceOnUse">
           <stop stopColor="#1a0a0a"/>
           <stop offset="1" stopColor="#3d0000"/>
         </linearGradient>
@@ -304,24 +314,40 @@ function AppIcon({ app, onTap, badge }: { app: AppDef; onTap: (id: AppId) => voi
 }
 
 // ── App Screen Wrapper ────────────────────────────────────────────────────────
-function AppScreen({ appId, onClose }: { appId: AppId; onClose: () => void }) {
+function AppScreen({
+  appId,
+  onClose,
+  params,
+  onOpenOverlay,
+  zIndexClassName = 'z-50',
+}: {
+  appId: AppId;
+  onClose: () => void;
+  params?: Record<string, unknown>;
+  // Only wired to the screens that currently need to open another screen on
+  // top of themselves (pai, digitaltwin) — every other case ignores it.
+  onOpenOverlay?: (id: string, params?: Record<string, unknown>) => void;
+  zIndexClassName?: string;
+}) {
   const renderApp = () => {
     switch (appId) {
-      case 'pai': return <MobilePai onClose={onClose} />;
+      case 'pai': return <MobileAIssistant onClose={onClose} onOpenApp={onOpenOverlay} />;
       case 'projects': return <MobileProjects onClose={onClose} />;
       case 'mystory': return <MobileMyStory onClose={onClose} />;
       case 'resume': return <MobileResume onClose={onClose} />;
       case 'terminal': return <MobileTerminal onClose={onClose} />;
       case 'contact': return <MobileContact onClose={onClose} />;
       case 'haiku': return <MobileHaiku onClose={onClose} />;
-      case 'digitaltwin': return <MobileDigitalTwin onClose={onClose} />;
+      case 'digitaltwin': return <MobileDigitalTwin onClose={onClose} onOpenApp={onOpenOverlay} />;
+      case 'canvas': return <MobileCanvas onClose={onClose} params={params} />;
+      case 'scheduler': return <MobileScheduler onClose={onClose} />;
       default: return null;
     }
   };
 
   return (
     <motion.div
-      className="fixed inset-0 z-50"
+      className={`fixed inset-0 ${zIndexClassName}`}
       initial={{ y: '100%', opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: '100%', opacity: 0 }}
@@ -335,6 +361,16 @@ function AppScreen({ appId, onClose }: { appId: AppId; onClose: () => void }) {
 // ── Main MobileShell ──────────────────────────────────────────────────────────
 export default function MobileShell() {
   const [activeApp, setActiveApp] = useState<AppId | null>(null);
+  const [activeAppParams, setActiveAppParams] = useState<Record<string, unknown> | undefined>(undefined);
+  // Overlay screen — stacks a second full-screen app ON TOP of activeApp instead
+  // of replacing it, so a mid-conversation tool call (open_canvas/open_scheduler/
+  // open_app fired from MobileDigitalTwin or MobileAIssistant — see their onOpenApp prop)
+  // doesn't unmount the screen underneath (e.g. kill the twin's avatar/audio).
+  // There's no general N-deep screen stack here — this is a one-level overlay
+  // built specifically for "something opens on top of the active screen while it
+  // keeps running behind it"; a real stack would be a bigger rework of
+  // activeApp's single-AppId model.
+  const [overlayApp, setOverlayApp] = useState<{ id: AppId; params?: Record<string, unknown> } | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [paiOpened, setPaiOpened] = useState(false);
   const [showSwipeHint, setShowSwipeHint] = useState(true);
@@ -362,13 +398,23 @@ export default function MobileShell() {
     }
   };
 
-  const handleOpenApp = (id: AppId) => {
+  const handleOpenApp = (id: AppId, params?: Record<string, unknown>) => {
     if (id === 'pai') setPaiOpened(true);
+    setActiveAppParams(params);
     setActiveApp(id);
   };
 
+  // Passed to AppScreen as onOpenOverlay — consumed by MobileAIssistant's and
+  // MobileDigitalTwin's onOpenApp. `id` arrives as a plain string (translated
+  // from a tool_call's app_id by whichever chat surface fired it), validated
+  // here since it crossed a prop boundary typed as string.
+  const openOverlayApp = (id: string, params?: Record<string, unknown>) => {
+    if (!isAppId(id)) return;
+    setOverlayApp({ id, params });
+  };
+
   const gridApps: AppDef[] = [
-    { id: 'pai', label: 'Pai', icon: <PaiIcon /> },
+    { id: 'pai', label: 'AIssistant', icon: <AIssistantIcon /> },
     { id: 'projects', label: 'Projects', icon: <ProjectsIcon /> },
     { id: 'mystory', label: 'My Story', icon: <MyStoryIcon /> },
     { id: 'resume', label: 'Resume', icon: <ResumeIcon /> },
@@ -383,7 +429,7 @@ export default function MobileShell() {
   ];
 
   const dockApps: AppDef[] = [
-    { id: 'pai', label: 'Pai', icon: <PaiIcon /> },
+    { id: 'pai', label: 'AIssistant', icon: <AIssistantIcon /> },
     { id: 'projects', label: 'Projects', icon: <ProjectsIcon /> },
     { id: 'mystory', label: 'My Story', icon: <MyStoryIcon /> },
     { id: 'resume', label: 'Resume', icon: <ResumeIcon /> },
@@ -453,7 +499,7 @@ export default function MobileShell() {
                 key={app.id}
                 className="flex flex-col items-center gap-1 cursor-pointer"
                 whileTap={{ scale: 0.88 }}
-                onClick={() => setActiveApp(app.id)}
+                onClick={() => handleOpenApp(app.id)}
               >
                 <div className="w-[52px] h-[52px] rounded-[12px] overflow-hidden shadow-md">
                   {app.icon}
@@ -498,7 +544,28 @@ export default function MobileShell() {
       {/* App Screens */}
       <AnimatePresence>
         {activeApp && (
-          <AppScreen key={activeApp} appId={activeApp} onClose={() => setActiveApp(null)} />
+          <AppScreen
+            key={activeApp}
+            appId={activeApp}
+            params={activeAppParams}
+            onClose={() => setActiveApp(null)}
+            onOpenOverlay={openOverlayApp}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Overlay screen — see overlayApp above. Rendered after (so painted on
+          top of) the primary AppScreen; activeApp stays mounted underneath,
+          unaffected. */}
+      <AnimatePresence>
+        {overlayApp && (
+          <AppScreen
+            key={`overlay-${overlayApp.id}`}
+            appId={overlayApp.id}
+            params={overlayApp.params}
+            onClose={() => setOverlayApp(null)}
+            zIndexClassName="z-[60]"
+          />
         )}
       </AnimatePresence>
     </div>

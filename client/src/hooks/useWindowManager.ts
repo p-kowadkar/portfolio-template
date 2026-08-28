@@ -9,6 +9,7 @@ export interface WindowState {
   zIndex: number;
   defaultPosition: { x: number; y: number };
   defaultSize: { width: number; height: number };
+  params?: Record<string, unknown>; // e.g. { project: 'careerforge' } for the canvas window
 }
 
 // Helper: center a window of given size on screen, below the hero text
@@ -34,7 +35,7 @@ const initialWindows: WindowState[] = [
   },
   {
     id: 'chat',
-    title: 'Pai',
+    title: 'AIssistant',
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
@@ -102,11 +103,31 @@ const initialWindows: WindowState[] = [
     defaultPosition: centered(640, 420),
     defaultSize: { width: 640, height: 420 },
   },
+  {
+    id: 'canvas',
+    title: 'Canvas',
+    isOpen: false,
+    isMinimized: false,
+    isMaximized: false,
+    zIndex: 10,
+    defaultPosition: centered(760, 560, 10),
+    defaultSize: { width: 760, height: 560 },
+  },
+  {
+    id: 'scheduler',
+    title: 'Schedule a Call',
+    isOpen: false,
+    isMinimized: false,
+    isMaximized: false,
+    zIndex: 10,
+    defaultPosition: centered(900, 700),
+    defaultSize: { width: 900, height: 700 },
+  },
 ];
 
 export interface WindowManager {
   windows: WindowState[];
-  openWindow: (id: string) => void;
+  openWindow: (id: string, params?: Record<string, unknown>) => void;
   closeWindow: (id: string) => void;
   minimizeWindow: (id: string) => void;
   maximizeWindow: (id: string) => void;
@@ -128,10 +149,12 @@ export function useWindowManager(): WindowManager {
   }, []);
 
   const openWindow = useCallback(
-    (id: string) => {
+    (id: string, params?: Record<string, unknown>) => {
       setWindows((prev) =>
         prev.map((w) =>
-          w.id === id ? { ...w, isOpen: true, isMinimized: false } : w
+          w.id === id
+            ? { ...w, isOpen: true, isMinimized: false, params: params ?? w.params }
+            : w
         )
       );
       focusWindow(id);

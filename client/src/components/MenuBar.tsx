@@ -60,10 +60,10 @@ const WALLPAPERS = [
 
 /* ── Achievements for notification center ── */
 const ACHIEVEMENTS = [
-  { icon: '🏆', text: '1st Place — Pulse NYC Hackathon', sub: 'Search Sentinel' },
-  { icon: '🏆', text: 'n8n Sponsor Prize — ElevenLabs Global Hackathon', sub: 'EZ OnCall' },
-  { icon: '🎤', text: 'Speaker — LLM Day NYC', sub: 'March 6, 2026' },
-  { icon: '🚀', text: 'CareerForge — Live Product', sub: 'forge-your-future.com' },
+  { icon: '🎯', text: 'Mock Achievement 1: 1st Place — Local Hackathon', sub: 'Mock Project' },
+  { icon: '🚀', text: 'Mock Achievement 2: Speaker — Regional Tech Meetup', sub: 'Community Talk' },
+  { icon: '🎤', text: 'Reference Achievement: Speaker — LLM Day NYC', sub: 'March 6, 2026' },
+  { icon: '🔴', text: 'ReferenceProject: CareerForge — Live Product', sub: 'forge-your-future.com' },
 ];
 
 interface MenuBarProps {
@@ -167,7 +167,7 @@ export default function MenuBar({
   const appName =
     {
       projects: 'Finder',
-      chat: 'Pai',
+      chat: 'AIssistant',
       videocall: 'FaceTime',
       messages: 'Messages',
       browser: 'Safari',
@@ -267,7 +267,7 @@ export default function MenuBar({
           {openMenu === 'File' && (
             <Dropdown onClose={close} minWidth={210} isLight={isLight}>
               <DropItem label="Open Projects" shortcut="⌘P" onClick={() => { onOpenApp?.('projects'); close(); }} isLight={isLight} />
-              <DropItem label="Open Pai" shortcut="⌘K" onClick={() => { onOpenApp?.('chat'); close(); }} isLight={isLight} />
+              <DropItem label="Open AIssistant" shortcut="⌘K" onClick={() => { onOpenApp?.('chat'); close(); }} isLight={isLight} />
               <DropItem label="Open Browser" shortcut="⌘B" onClick={() => { onOpenApp?.('browser'); close(); }} isLight={isLight} />
               <Divider isLight={isLight} />
               <DropItem label="Open Messages" shortcut="⌘M" onClick={() => { onOpenApp?.('messages'); close(); }} isLight={isLight} />
@@ -354,7 +354,7 @@ export default function MenuBar({
               <Divider isLight={isLight} />
               <SectionLabel label="Open" isLight={isLight} />
               <DropItem label="Projects" shortcut="⌘1" onClick={() => { onOpenApp?.('projects'); close(); }} isLight={isLight} />
-              <DropItem label="Pai" shortcut="⌘2" onClick={() => { onOpenApp?.('chat'); close(); }} isLight={isLight} />
+              <DropItem label="AIssistant" shortcut="⌘2" onClick={() => { onOpenApp?.('chat'); close(); }} isLight={isLight} />
               <DropItem label="Browser" shortcut="⌘3" onClick={() => { onOpenApp?.('browser'); close(); }} isLight={isLight} />
               <DropItem label="Messages" shortcut="⌘4" onClick={() => { onOpenApp?.('messages'); close(); }} isLight={isLight} />
               <DropItem label="Video Call" shortcut="⎈5" onClick={() => { onOpenApp?.('videocall'); close(); }} isLight={isLight} />

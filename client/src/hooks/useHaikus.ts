@@ -18,16 +18,16 @@ export interface Haiku {
 
 // Fallback haikus — used when backend is unavailable
 export const FALLBACK_HAIKUS: Haiku[] = [
-  { id: 'planes',   lines: ['Fifteen planes take flight', 'Balsa wood, midnight solder', 'Belagavi dreams'],         fact: 'Built 15 RC planes + 4 quadcopters from scratch in college', emoji: '✈️' },
-  { id: 'parasail', lines: ['First paycheck arrives', 'Twenty-two engineers soar', 'Parasailing joy'],               fact: 'Celebrated first Cognizant paycheck by parasailing with 22 colleagues', emoji: '🪂' },
-  { id: 'scuba',    lines: ['Underwater calm', 'Fluid dynamics, felt not', 'Dassault taught me this'],              fact: 'First scuba dive was a Dassault team event — experienced aerodynamics viscerally', emoji: '🤿' },
-  { id: 'goa',      lines: ['Goa, four hours south', 'Debug code on the beach', 'Sunset clears the mind'],          fact: 'Regular Goa trips with the Belagavi crew — best debugging sessions happened on the beach', emoji: '🏖️' },
-  { id: 'anime',    lines: ['Steins;Gate reruns', 'Ghost in the Shell at 2 AM', 'AI dreams take shape'],            fact: "Steins;Gate & Ghost in the Shell directly influenced his AI philosophy", emoji: '📺' },
-  { id: 'workshop', lines: ['Seventy-two hours', 'Seventy-two engineers', 'Belagavi wakes'],                        fact: 'First RC plane workshop: 72 registrations in 72 hours — had to close signups', emoji: '🛠️' },
-  { id: 'stirling', lines: ['Heat becomes motion', 'Stirling engine, half-built, proud', 'Theory made real'],       fact: 'Built a Stirling engine in college — theoretically possible, practically challenging', emoji: '⚙️' },
-  { id: 'gre',      lines: ['Pune, 2 AM', 'Secret tricks for GRE math', 'Students line the hall'],                  fact: 'Became so good at GRE math in Pune that students lined up for his tips', emoji: '📐' },
-  { id: 'newark',   lines: ['Two suitcases packed', 'Newark fog, September cold', 'Dreams weigh nothing here'],     fact: 'Arrived in Newark with two suitcases and a scholarship — September 2022', emoji: '🌁' },
-  { id: 'sentinel', lines: ['Seven hours, one night', 'Search Sentinel wins first place', 'Snowstorm, NYC'],        fact: 'Built Search Sentinel in 7 hours during a NYC snowstorm — won 1st place at Pulse NYC', emoji: '🏆' },
+  { id: 'placeholder-funny',       lines: ['Haiku one right here', 'Something funny about you', 'Edit me — go on'],         fact: 'Haiku1: Something funny about you.', emoji: '😄' },
+  { id: 'placeholder-insightful',  lines: ['Haiku two waits here', 'Something insightful and true', 'Your own quiet truth'], fact: 'Haiku2: Something insightful about you.', emoji: '💡' },
+  { id: 'placeholder-achievement', lines: ['Haiku three, a win', "Something you're proud you built", 'Name your own triumph'], fact: 'Haiku3: A personal achievement.', emoji: '🏆' },
+  { id: 'placeholder-hobby',       lines: ['Haiku four, a hobby', 'Something you love outside work', 'What lights you up most'], fact: 'Haiku4: A hobby or passion.', emoji: '🎨' },
+  { id: 'placeholder-place',       lines: ['Haiku five, a place', 'Somewhere that shaped who you are', 'Your own origin'],  fact: 'Haiku5: A place that shaped you.', emoji: '🌍' },
+  { id: 'placeholder-milestone',   lines: ['Haiku six, a big leap', 'A moment you took the risk', 'Your own turning point'], fact: 'Haiku6: A milestone or turning point.', emoji: '🚀' },
+  { id: 'placeholder-habit',       lines: ['Haiku seven, quirk', 'A small habit, oddly yours', "Nobody else's"],           fact: 'Haiku7: A quirky habit.', emoji: '🔧' },
+  { id: 'placeholder-people',      lines: ['Haiku eight, a name', 'Someone who shaped how you think', 'Say thanks in a line'], fact: 'Haiku8: A person who shaped you.', emoji: '🤝' },
+  { id: 'placeholder-curiosity',   lines: ['Haiku nine, a spark', "The question you can't let go", 'Chase it in five-sev-five'], fact: 'Haiku9: A curiosity or obsession.', emoji: '🔭' },
+  { id: 'placeholder-dream',       lines: ['Haiku ten, a wish', 'Something you\'re building toward', 'Not there yet — still going'], fact: 'Haiku10: A dream or goal.', emoji: '✨' },
 ];
 
 const API_BASE = import.meta.env.VITE_API_URL as string | undefined;

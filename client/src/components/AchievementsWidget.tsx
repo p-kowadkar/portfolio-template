@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const achievements = [
-  { icon: '🏆', text: '1st Place — Pulse NYC Hackathon (Search Sentinel)' },
-  { icon: '🏆', text: 'n8n Sponsor Prize — ElevenLabs Global Hackathon (EZ OnCall)' },
-  { icon: '🎤', text: 'Speaker — LLM Day NYC · March 6, 2026' },
+  { icon: '🎯', text: 'Mock Achievement 1: 1st Place — Local Hackathon' },
+  { icon: '🚀', text: 'Mock Achievement 2: Speaker — Regional Tech Meetup' },
+  { icon: '🎤', text: 'Reference Achievement: Speaker — LLM Day NYC · March 2026' },
 ];
 
 export default function AchievementsWidget() {

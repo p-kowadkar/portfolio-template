@@ -1,0 +1,6 @@
+<svg viewBox="0 0 800 450" xmlns="http://www.w3.org/2000/svg">
+  <rect width="800" height="450" fill="#1c1c1e"/>
+  <rect x="20" y="20" width="760" height="410" rx="16" fill="none" stroke="#3a3a3c" stroke-width="2" stroke-dasharray="10 8"/>
+  <text x="400" y="200" font-family="'DM Mono', monospace" font-size="30" fill="#e5484d" text-anchor="middle" font-weight="600">Mock Experience 2</text>
+  <text x="400" y="240" font-family="'DM Mono', monospace" font-size="15" fill="#8e8e93" text-anchor="middle">Replace with your own photo</text>
+</svg>

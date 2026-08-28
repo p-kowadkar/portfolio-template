@@ -42,12 +42,11 @@ const HELP_TEXT = [
 const ABOUT_TEXT = [
   '  Pranav Kowadkar — AI/ML Engineer & Builder',
   '',
-  '  From Belagavi, Karnataka → Newark, NJ → Silicon Valley',
-  '  Mechanical Engineer turned AI Systems Architect.',
-  '  Built 15 RC planes before writing his first line of code.',
+  '  [Your journey line goes here — e.g. "From X → Y → Z"]',
+  '  [A one-line personal narrative hook goes here]',
   '',
-  '  Currently: Building Smriti (persistent-memory AI)',
-  '  Previously: Dassault Systèmes, Cognizant, NJIT',
+  '  Currently: Building ReferenceProject — CareerForge',
+  '  Previously: ReferenceExperience — NJIT Brain Connectivity Lab',
   '  Talks: LLM Day NYC — March 6, 2026',
 ];
 

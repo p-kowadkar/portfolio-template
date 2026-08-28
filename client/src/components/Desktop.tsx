@@ -14,7 +14,11 @@ import BrowserApp from './apps/BrowserApp';
 import CVApp from './apps/CVApp';
 import MyStoryApp from './apps/MyStoryApp';
 import TerminalApp from './apps/TerminalApp';
+import CanvasApp from './apps/CanvasApp';
+import SchedulerApp from './apps/SchedulerApp';
 import HaikuEasterEgg from './HaikuEasterEgg';
+import { WindowParamsProvider } from '../contexts/WindowParamsContext';
+import { WindowActionsProvider } from '../contexts/WindowActionsContext';
 
 interface DesktopProps {
   windowManager: WindowManager;
@@ -29,6 +33,8 @@ const appComponents: Record<string, React.ReactNode> = {
   cv: <CVApp />,
   mystory: <MyStoryApp />,
   terminal: <TerminalApp />,
+  canvas: <CanvasApp />,
+  scheduler: <SchedulerApp />,
 };
 
 export default function Desktop({ windowManager }: DesktopProps) {
@@ -40,6 +46,8 @@ export default function Desktop({ windowManager }: DesktopProps) {
     .sort((a, b) => b.zIndex - a.zIndex)[0];
 
   return (
+    <WindowParamsProvider windows={windows}>
+    <WindowActionsProvider openWindow={openWindow}>
     <div
       className="desktop-noise desktop-root fixed inset-0 overflow-hidden"
       style={{
@@ -114,6 +122,8 @@ export default function Desktop({ windowManager }: DesktopProps) {
       {/* Haiku easter egg — Konami code: ↑↑↓↓←→←→BA */}
       <HaikuEasterEgg />
     </div>
+    </WindowActionsProvider>
+    </WindowParamsProvider>
   );
 }
 
