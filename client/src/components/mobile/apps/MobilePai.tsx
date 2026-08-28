@@ -1,15 +1,13 @@
 // MobilePai — iOS Messages-style chat interface for Pai
 // Design: Dark maroon/black, iMessage-style bubbles, iOS keyboard behavior
+// Requires VITE_API_URL — no client-side fallback by design, see ChatPKApp.tsx
+// (desktop) for the full rationale: the RAG prompt and every API key stay
+// server-side in backend/main.py, never in the client bundle.
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, ChevronLeft } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
-
-const FALLBACK_SYSTEM_PROMPT = `You are Pai — Pranav Kowadkar's AI Guide. Speak with cinematic clarity and human warmth. Always speak in third person about Pranav. Never impersonate him. Keep responses conversational, 2-4 sentences. No bullet lists — flowing prose only.
-
-Pranav Kowadkar is an AI Engineer, builder, and hackathon winner based in New Jersey. He grew up in Belagavi, Karnataka, India. He built 15 RC planes and 4 quadcopters from scratch. He studied Mechanical Engineering at KLE Dr. M.S. Sheshgiri College (VTU, 2014–2018), worked at Cognizant, CSIR-NAL, and Dassault Systèmes. Moved to the US in September 2022 for an MS in Data Science at NJIT (graduated May 2024, GPA 3.9). Currently AI Engineer at NJIT Brain Connectivity Lab. Won 1st Place at Pulse NYC Hackathon (Search Sentinel). Won n8n Sponsor Prize at ElevenLabs Hackathon (EZ OnCall). Built CareerForge (live at forge-your-future.com). Speaking at LLM Day NYC on March 6, 2026. Contact: pk.kowadkar@gmail.com | @pk_kowadkar on Telegram.`;
 
 interface Message {
   role: 'user' | 'model';
@@ -56,23 +54,6 @@ export default function MobilePai({ onClose }: { onClose: () => void }) {
         if (res.ok) {
           const data = await res.json();
           reply = data.reply || data.message || data.response || '';
-        }
-      }
-      if (!reply && GEMINI_API_KEY) {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              system_instruction: { parts: [{ text: FALLBACK_SYSTEM_PROMPT }] },
-              contents: newMessages.map((m) => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-            }),
-          }
-        );
-        if (res.ok) {
-          const data = await res.json();
-          reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
         }
       }
       if (!reply) {

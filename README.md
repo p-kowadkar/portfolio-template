@@ -54,7 +54,7 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 |---|---|
 | **iOS Intro** | Short `pk` flash (edit for your initials) (~1.5s) then springboard |
 | **Live Status Bar** | Real-time clock updates every 10 seconds |
-| **Springboard Grid** | 3×3 app icon grid with labels and animated tap feedback |
+| **Springboard Grid** | 3-column app icon grid with labels and animated tap feedback |
 | **Frosted Glass Dock** | 4 pinned apps in a bottom dock pill |
 | **Pull-down Notification Center** | Swipe down from status bar to reveal 3 achievement notification cards |
 | **Idle Lock Screen** | After 60 seconds of inactivity: blurred wallpaper, large clock, tap-to-unlock |
@@ -65,13 +65,13 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 
 | App | Description |
 |---|---|
-| **AI Guide (Pai)** | AI assistant powered by OpenRouter + RAG backend. Knows your full background, projects, and story via `journey.txt` + `resume.txt`. Suggested question chips on first open. Rename and reprompt in `ChatPKApp.tsx`. |
+| **AI Guide (Pai)** | AI assistant powered by OpenRouter + RAG backend. Knows your full background, projects, and story via `journey.txt` + `resume.txt`. Suggested question chips on first open. Requires the backend — `ChatPKApp.tsx`/`MobilePai.tsx` have no client-side fallback by design (see the comment at the top of either file); the actual persona/prompt lives in `backend/main.py`'s `PAI_SYSTEM_PROMPT`. |
 | **Digital Twin (Talk to PK)** | FaceTime-style video call: voice input (Web Speech API) → `/api/chat` (first-person persona) → ElevenLabs TTS in your cloned voice → Simli real-time talking-head avatar lip-syncing over your portrait. Live captions + on-demand transcript. Works as voice-only (no avatar) if Simli isn't configured. Setup: `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` + `SIMLI_API_KEY`/`SIMLI_FACE_ID` in `backend/.env` — see `backend.env.example` for the full walkthrough (voice cloning, avatar creation, timing/cost notes). An optional Supabase-backed rate gate keeps a runaway bill from a public link — see the same file. |
 | **Projects** | Interactive project browser with tech stack badges, GitHub links, and live demo links. Data in `client/src/data/projects.ts`. |
 | **My Story** | Chapter-based visual timeline. Replace chapter content in `MyStoryApp.tsx`. |
 | **Resume / CV** | Inline resume viewer with PDF download. Replace the PDF in `client/public/data/` and update `CVApp.tsx`. |
 | **Terminal** | Easter egg terminal with `help`, `whoami`, `projects`, `contact`, and `secret` commands. Update responses in `TerminalApp.tsx`. |
-| **Contact** | iOS Contacts-style card. Update links in `ContactApp.tsx` or the equivalent mobile app. |
+| **Contact** | Message form (desktop, `MessagesApp.tsx`) posts to `/api/contact` → Gmail SMTP. Mobile's `MobileContact.tsx` is a static iOS Contacts-style card with mailto/social links instead — update both. |
 | **Haiku** | AI-generated haiku poetry with swipe gestures (mobile) or Konami code (desktop). |
 | **Browser / External app** | External link app — point it at your own product/project URL. |
 
@@ -121,7 +121,7 @@ Both modes share the same AI assistant (Pai), project data, and narrative conten
 ## Project Structure
 
 ```
-portfolio-skeleton/
+portfolio-template/
 ├── client/
 │   ├── public/
 │   │   ├── manifest.json              # PWA manifest
@@ -135,7 +135,7 @@ portfolio-skeleton/
 │       │   │   ├── MyStoryApp.tsx
 │       │   │   ├── CVApp.tsx
 │       │   │   ├── TerminalApp.tsx
-│       │   │   └── ContactApp.tsx
+│       │   │   └── MessagesApp.tsx    # Contact form (desktop)
 │       │   ├── mobile/                # iOS mobile shell
 │       │   │   ├── MobileShell.tsx
 │       │   │   ├── MobileIntro.tsx
@@ -148,7 +148,7 @@ portfolio-skeleton/
 │       │   │       ├── MobileMyStory.tsx
 │       │   │       ├── MobileResume.tsx
 │       │   │       ├── MobileTerminal.tsx
-│       │   │       ├── MobileContact.tsx
+│       │   │       ├── MobileContact.tsx      # Static contact card (mobile)
 │       │   │       └── MobileHaiku.tsx
 │       │   ├── Desktop.tsx            # macOS desktop shell
 │       │   ├── MenuBar.tsx            # macOS menu bar
@@ -156,7 +156,9 @@ portfolio-skeleton/
 │       │   ├── IntroScreen.tsx        # Boot animation
 │       │   └── HaikuEasterEgg.tsx
 │       ├── data/
-│       │   └── projects.ts            # Shared project data
+│       │   ├── projects.ts            # Shared project data
+│       │   ├── experience.ts          # Work history (git-graph timeline)
+│       │   └── education.ts           # Education history
 │       ├── hooks/
 │       │   ├── useMobile.tsx          # Device detection hook
 │       │   ├── useSimliAvatar.ts      # Digital Twin: Simli WebRTC avatar
@@ -189,8 +191,8 @@ portfolio-skeleton/
 ### Step 1 — Clone and install
 
 ```bash
-git clone https://github.com/p-kowadkar/portfolio-skeleton.git
-cd portfolio-skeleton
+git clone https://github.com/p-kowadkar/portfolio-template.git
+cd portfolio-template
 pnpm install
 ```
 
@@ -200,9 +202,10 @@ pnpm install
 |---|---|
 | `backend/data/journey.txt` | Replace with your story — written in first person, narrative style. This feeds the RAG backend. |
 | `backend/data/resume.txt` | Paste your resume in plain text. Sections: SUMMARY, SKILLS, EXPERIENCE, PROJECTS, ACHIEVEMENTS. |
-| `client/src/components/apps/ChatPKApp.tsx` | Update `FALLBACK_SYSTEM_PROMPT` — fill in the `[YOUR_NAME]` / `[AI_GUIDE_NAME]` placeholders with your details. |
+| `backend/main.py` — `PAI_SYSTEM_PROMPT` | Third-person persona for the AI Guide (Pai). Update the identity/contact/rules — see the comment style already in the file. |
 | `client/src/data/projects.ts` | Replace with your own projects. |
 | `client/src/data/experience.ts` | Replace with your own work history. |
+| `client/src/data/education.ts` | Replace with your own education history. |
 | `client/src/components/apps/MyStoryApp.tsx` | Replace chapter content with your own narrative. |
 | `client/public/data/` | Drop in your own images and resume PDF. Update references in `CVApp.tsx` and `experience.ts`. |
 | `backend/main.py` — `DIGITAL_TWIN_PROMPT` | First-person persona for the "Talk to PK" call. Separate from `PAI_SYSTEM_PROMPT`, doesn't share state with it — update both when you change your identity/contact info. |
