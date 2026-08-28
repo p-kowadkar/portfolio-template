@@ -30,7 +30,7 @@ export const FALLBACK_HAIKUS: Haiku[] = [
   { id: 'sentinel', lines: ['Seven hours, one night', 'Search Sentinel wins first place', 'Snowstorm, NYC'],        fact: 'Built Search Sentinel in 7 hours during a NYC snowstorm — won 1st place at Pulse NYC', emoji: '🏆' },
 ];
 
-const API_BASE = import.meta.env.VITE_API_URL || 'https://pk-portfolio-backend.onrender.com';
+const API_BASE = import.meta.env.VITE_API_URL as string | undefined;
 const SESSION_KEY = 'pk_haikus_session';
 
 export function useHaikus() {
@@ -53,6 +53,14 @@ export function useHaikus() {
       } catch {
         // ignore parse errors
       }
+    }
+
+    // No backend configured — go straight to fallback haikus, no network call.
+    if (!API_BASE) {
+      setHaikus(FALLBACK_HAIKUS);
+      setSource('fallback');
+      setLoading(false);
+      return;
     }
 
     // Fetch fresh haikus from backend

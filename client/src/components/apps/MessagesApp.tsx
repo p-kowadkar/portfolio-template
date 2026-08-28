@@ -1,26 +1,33 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, CheckCircle } from 'lucide-react';
+import { Send, CheckCircle, AlertCircle } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://pkowadkar-backend.onrender.com';
+const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
 export default function MessagesApp() {
   const [form, setForm] = useState({ name: '', email: '', message: '' });
-  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'unconfigured' | 'error'>('idle');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name || !form.email || !form.message) return;
+
+    // No backend configured — don't send anywhere, don't fake success.
+    if (!API_URL) {
+      setStatus('unconfigured');
+      return;
+    }
+
     setStatus('sending');
     try {
-      await fetch(`${API_URL}/api/contact`, {
+      const res = await fetch(`${API_URL}/api/contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      setStatus('sent');
+      setStatus(res.ok ? 'sent' : 'error');
     } catch {
-      setStatus('sent'); // Show success anyway
+      setStatus('error');
     }
   };
 
@@ -88,6 +95,38 @@ export default function MessagesApp() {
                 Pranav will get back to you.
               </p>
             </div>
+          </motion.div>
+        ) : status === 'unconfigured' || status === 'error' ? (
+          <motion.div
+            key="unconfigured"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex flex-col items-center justify-center flex-1 gap-4 px-6 text-center"
+          >
+            <AlertCircle size={48} color="rgba(255,255,255,0.4)" strokeWidth={1.5} />
+            <div>
+              <p style={{ fontSize: '16px', fontWeight: 500, color: '#f0f0f2', marginBottom: '6px' }}>
+                {status === 'unconfigured' ? "Contact form isn't set up yet" : 'Something went wrong'}
+              </p>
+              <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>
+                {status === 'unconfigured'
+                  ? 'Set VITE_API_URL and deploy backend/ (see README) to receive messages here.'
+                  : "The backend didn't accept that — try again, or email directly."}
+                {' '}
+                <a href="mailto:pk.kowadkar@gmail.com" style={{ color: '#E50914' }}>pk.kowadkar@gmail.com</a>
+              </p>
+            </div>
+            <button
+              onClick={() => setStatus('idle')}
+              style={{
+                padding: '8px 18px', borderRadius: '20px',
+                background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+                color: 'rgba(255,255,255,0.7)', fontSize: '13px', cursor: 'pointer',
+                fontFamily: "'Outfit', sans-serif",
+              }}
+            >
+              Back to form
+            </button>
           </motion.div>
         ) : (
           <motion.form
