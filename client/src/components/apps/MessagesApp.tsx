@@ -1,12 +1,53 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, CheckCircle, AlertCircle } from 'lucide-react';
+import { readSession, writeSession, clearSession } from '@/lib/sessionStore';
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
+// An unsent draft survives closing/minimizing the window, so a half-written message isn't
+// lost to a stray click on the red light. Tab-scoped and never transmitted (see
+// sessionStore.ts); cleared once the message is actually delivered, or by the visitor.
+// Only `form` is stored, never `status`: every mount starts 'idle'.
+const DRAFT_KEY = 'pk_messages_draft_v1';
+const DRAFT_DEBOUNCE_MS = 400;
+const EMPTY_FORM = { name: '', email: '', message: '' };
+type Form = typeof EMPTY_FORM;
+const isDraft = (v: unknown): v is Form =>
+  !!v && typeof v === 'object' && (['name', 'email', 'message'] as const).every((k) => typeof (v as Record<string, unknown>)[k] === 'string');
+const isBlank = (f: Form) => !f.name && !f.email && !f.message;
+// Over the size cap writeSession skips the write, so a very long message keeps the last
+// good copy instead of a truncated one.
+const saveDraft = (f: Form) => {
+  if (isBlank(f)) clearSession(DRAFT_KEY);
+  else writeSession(DRAFT_KEY, f);
+};
+
 export default function MessagesApp() {
-  const [form, setForm] = useState({ name: '', email: '', message: '' });
+  const [form, setForm] = useState<Form>(() => {
+    const d = readSession(DRAFT_KEY, isDraft);
+    return d ? { name: d.name, email: d.email, message: d.message } : EMPTY_FORM;
+  });
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'unconfigured' | 'error'>('idle');
+
+  // Debounced save while the form is being edited. Not while sending/sent/unconfigured/error:
+  // a submit that is in flight (or already showing a terminal screen) must not re-write what
+  // it is about to clear, or resurrect a draft that was just cleared.
+  useEffect(() => {
+    if (status !== 'idle') return;
+    const t = setTimeout(() => saveDraft(form), DRAFT_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [form, status]);
+
+  // Flush on unmount, otherwise closing the window inside the debounce window would drop
+  // the tail of what was typed.
+  const formRef = useRef(form);
+  const statusRef = useRef(status);
+  formRef.current = form;
+  statusRef.current = status;
+  useEffect(() => () => {
+    if (statusRef.current === 'idle') saveDraft(formRef.current);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,7 +66,18 @@ export default function MessagesApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      setStatus(res.ok ? 'sent' : 'error');
+      // Drop the draft (stored AND in memory) only once the backend actually accepted the
+      // message. A non-2xx or network failure keeps the draft -- both are honest 'error'
+      // here (unlike the live site, whose contact form quietly shows "sent" either way; this
+      // template's version already told visitors the truth before this sprint, and that's
+      // worth keeping), so nothing the visitor wrote is ever lost to a failed send.
+      if (res.ok) {
+        clearSession(DRAFT_KEY);
+        setForm(EMPTY_FORM);
+        setStatus('sent');
+      } else {
+        setStatus('error');
+      }
     } catch {
       setStatus('error');
     }
@@ -95,6 +147,26 @@ export default function MessagesApp() {
                 Pranav will get back to you.
               </p>
             </div>
+            {/* Closing and reopening the window already gives a fresh form -- this just
+                saves the round trip while it's still open. */}
+            <button
+              type="button"
+              onClick={() => setStatus('idle')}
+              className="transition-all hover:brightness-125"
+              style={{
+                marginTop: '4px',
+                padding: '8px 16px',
+                borderRadius: '10px',
+                fontSize: '13px',
+                background: 'rgba(255,255,255,0.08)',
+                color: 'rgba(255,255,255,0.75)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                fontFamily: "'Outfit', sans-serif",
+                cursor: 'pointer',
+              }}
+            >
+              Send another message
+            </button>
           </motion.div>
         ) : status === 'unconfigured' || status === 'error' ? (
           <motion.div
@@ -213,7 +285,27 @@ export default function MessagesApp() {
                 required
               />
             </div>
-            <div className="flex justify-end">
+            <div className="flex justify-between items-center">
+              {/* Doubles as the hint that a draft was restored. */}
+              <div>
+                {status === 'idle' && !isBlank(form) && (
+                  <button
+                    type="button"
+                    onClick={() => { setForm(EMPTY_FORM); clearSession(DRAFT_KEY); }}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'rgba(255,255,255,0.4)',
+                      fontSize: '12.5px',
+                      fontFamily: "'Outfit', sans-serif",
+                      cursor: 'pointer',
+                      padding: '4px 2px',
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
               <button
                 type="submit"
                 disabled={status === 'sending'}
