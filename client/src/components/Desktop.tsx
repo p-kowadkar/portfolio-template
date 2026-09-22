@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { AnimatePresence } from 'framer-motion';
 import type { WindowManager } from '../hooks/useWindowManager';
@@ -40,6 +40,13 @@ const appComponents: Record<string, React.ReactNode> = {
 export default function Desktop({ windowManager }: DesktopProps) {
   const { windows, openWindow, closeWindow, minimizeWindow, maximizeWindow, focusWindow } = windowManager;
   const [desktopClicked, setDesktopClicked] = useState(false);
+
+  // Dev-only handle for poking window state from the console (`__wm.windows`, `__wm.openWindow('x')`),
+  // which is what lets window behaviour be checked without driving a live call. Vite replaces
+  // import.meta.env.DEV with false in production builds, so this is stripped from the bundle.
+  useEffect(() => {
+    if (import.meta.env.DEV) (window as unknown as { __wm?: WindowManager }).__wm = windowManager;
+  }, [windowManager]);
 
   const activeWindow = [...windows]
     .filter((w) => w.isOpen && !w.isMinimized)
@@ -105,6 +112,10 @@ export default function Desktop({ windowManager }: DesktopProps) {
                 onMinimize={minimizeWindow}
                 onMaximize={maximizeWindow}
                 onFocus={focusWindow}
+                // Window has always styled unfocused chrome (gray traffic lights, lighter
+                // shadow) but was never told which window is focused, so every window
+                // looked focused.
+                isFocused={win.id === activeWindow?.id}
               >
                 {appComponents[win.id]}
               </Window>

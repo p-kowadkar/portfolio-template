@@ -1,18 +1,25 @@
 import { useState, useCallback } from 'react';
+import {
+  getViewport, bringToFront, openWindowIn, restoreWindowIn, closeWindowIn, minimizeWindowIn,
+  maximizeWindowIn, setCompactIn, setGeometryIn, clampAllIn, type WindowLike, type Point, type Size,
+} from '../lib/windowState';
 
-export interface WindowState {
-  id: string;
+/** A desktop window. The pure fields (flags, z-order, frame) live in lib/windowState.ts along
+ *  with the logic that changes them; this adds what only the manager and the UI need. */
+export interface WindowState extends WindowLike {
   title: string;
-  isOpen: boolean;
-  isMinimized: boolean;
-  isMaximized: boolean;
-  zIndex: number;
+  // isCompact (in WindowLike) shrinks the window into a small always-on-top corner bubble
+  // instead of closing it -- used by the Digital Twin call so it can keep running while a tool
+  // call opens Canvas/Scheduler on top of it. See Window.tsx and VideoCallApp.tsx.
+  //
+  // params (in WindowLike), e.g. { project: 'careerforge' } for the canvas window, is set by
+  // openWindow's second argument and read by whatever component the window id renders.
+  /** TRANSITIONAL: still what Window.tsx seeds react-rnd from. Removed when Window.tsx starts
+   *  rendering from the manager-owned frame (position/size). */
   defaultPosition: { x: number; y: number };
-  defaultSize: { width: number; height: number };
-  params?: Record<string, unknown>; // e.g. { project: 'careerforge' } for the canvas window
 }
 
-// Helper: center a window of given size on screen, below the hero text
+// TRANSITIONAL helper for defaultPosition above: center a window on screen, below the hero text.
 function centered(w: number, h: number, offsetX = 0, offsetY = 0) {
   const sw = typeof window !== 'undefined' ? window.innerWidth : 1440;
   const sh = typeof window !== 'undefined' ? window.innerHeight : 900;
@@ -29,7 +36,11 @@ const initialWindows: WindowState[] = [
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
+    isCompact: false,
     zIndex: 10,
+    position: null,
+    size: null,
+    defaultOffset: { x: 0, y: 0 },
     defaultPosition: centered(960, 600),
     defaultSize: { width: 960, height: 600 },
   },
@@ -39,7 +50,11 @@ const initialWindows: WindowState[] = [
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
+    isCompact: false,
     zIndex: 10,
+    position: null,
+    size: null,
+    defaultOffset: { x: 40, y: 0 },
     defaultPosition: centered(420, 580, 40),
     defaultSize: { width: 420, height: 580 },
   },
@@ -49,7 +64,11 @@ const initialWindows: WindowState[] = [
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
+    isCompact: false,
     zIndex: 10,
+    position: null,
+    size: null,
+    defaultOffset: { x: -20, y: 0 },
     defaultPosition: centered(560, 460, -20),
     defaultSize: { width: 560, height: 460 },
   },
@@ -59,7 +78,11 @@ const initialWindows: WindowState[] = [
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
+    isCompact: false,
     zIndex: 10,
+    position: null,
+    size: null,
+    defaultOffset: { x: 60, y: 0 },
     defaultPosition: centered(460, 520, 60),
     defaultSize: { width: 460, height: 520 },
   },
@@ -69,7 +92,11 @@ const initialWindows: WindowState[] = [
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
+    isCompact: false,
     zIndex: 10,
+    position: null,
+    size: null,
+    defaultOffset: { x: 0, y: 0 },
     defaultPosition: centered(1060, 640),
     defaultSize: { width: 1060, height: 640 },
   },
@@ -79,7 +106,11 @@ const initialWindows: WindowState[] = [
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
+    isCompact: false,
     zIndex: 10,
+    position: null,
+    size: null,
+    defaultOffset: { x: 30, y: 0 },
     defaultPosition: centered(720, 560, 30),
     defaultSize: { width: 720, height: 560 },
   },
@@ -89,7 +120,11 @@ const initialWindows: WindowState[] = [
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
+    isCompact: false,
     zIndex: 10,
+    position: null,
+    size: null,
+    defaultOffset: { x: 0, y: 0 },
     defaultPosition: centered(900, 620),
     defaultSize: { width: 900, height: 620 },
   },
@@ -99,7 +134,11 @@ const initialWindows: WindowState[] = [
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
+    isCompact: false,
     zIndex: 10,
+    position: null,
+    size: null,
+    defaultOffset: { x: 0, y: 0 },
     defaultPosition: centered(640, 420),
     defaultSize: { width: 640, height: 420 },
   },
@@ -109,7 +148,11 @@ const initialWindows: WindowState[] = [
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
+    isCompact: false,
     zIndex: 10,
+    position: null,
+    size: null,
+    defaultOffset: { x: 10, y: 0 },
     defaultPosition: centered(760, 560, 10),
     defaultSize: { width: 760, height: 560 },
   },
@@ -119,7 +162,11 @@ const initialWindows: WindowState[] = [
     isOpen: false,
     isMinimized: false,
     isMaximized: false,
+    isCompact: false,
     zIndex: 10,
+    position: null,
+    size: null,
+    defaultOffset: { x: 0, y: 0 },
     defaultPosition: centered(900, 700),
     defaultSize: { width: 900, height: 700 },
   },
@@ -128,63 +175,69 @@ const initialWindows: WindowState[] = [
 export interface WindowManager {
   windows: WindowState[];
   openWindow: (id: string, params?: Record<string, unknown>) => void;
+  /** Un-minimize a window (no params) and bring it to the front. */
+  restoreWindow: (id: string) => void;
   closeWindow: (id: string) => void;
   minimizeWindow: (id: string) => void;
   maximizeWindow: (id: string) => void;
   focusWindow: (id: string) => void;
+  setWindowCompact: (id: string, compact: boolean) => void;
+  /** A drag/resize finished: store the window's new frame. */
+  setWindowGeometry: (id: string, patch: { position?: Point; size?: Size }) => void;
+  /** The browser was resized: pull every remembered frame back inside the desktop area. */
+  clampWindowsToViewport: () => void;
 }
 
+// Each action is a thin wrapper over a pure transformer in lib/windowState.ts, which is where
+// the semantics (and the tests) live. They read the viewport at call time, inside the updater.
 export function useWindowManager(): WindowManager {
   const [windows, setWindows] = useState<WindowState[]>(initialWindows);
-  const [topZ, setTopZ] = useState(11);
 
   const focusWindow = useCallback((id: string) => {
-    setTopZ((z) => {
-      const newZ = z + 1;
-      setWindows((prev) =>
-        prev.map((w) => (w.id === id ? { ...w, zIndex: newZ } : w))
-      );
-      return newZ;
-    });
+    setWindows((prev) => bringToFront(prev, id));
   }, []);
 
-  const openWindow = useCallback(
-    (id: string, params?: Record<string, unknown>) => {
-      setWindows((prev) =>
-        prev.map((w) =>
-          w.id === id
-            ? { ...w, isOpen: true, isMinimized: false, params: params ?? w.params }
-            : w
-        )
-      );
-      focusWindow(id);
-    },
-    [focusWindow]
-  );
+  const openWindow = useCallback((id: string, params?: Record<string, unknown>) => {
+    setWindows((prev) => openWindowIn(prev, id, params, getViewport()));
+  }, []);
+
+  const restoreWindow = useCallback((id: string) => {
+    setWindows((prev) => restoreWindowIn(prev, id, getViewport()));
+  }, []);
 
   const closeWindow = useCallback((id: string) => {
-    setWindows((prev) =>
-      prev.map((w) =>
-        w.id === id
-          ? { ...w, isOpen: false, isMinimized: false, isMaximized: false }
-          : w
-      )
-    );
+    setWindows((prev) => closeWindowIn(prev, id));
   }, []);
 
   const minimizeWindow = useCallback((id: string) => {
-    setWindows((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, isMinimized: true } : w))
-    );
+    setWindows((prev) => minimizeWindowIn(prev, id));
   }, []);
 
   const maximizeWindow = useCallback((id: string) => {
-    setWindows((prev) =>
-      prev.map((w) =>
-        w.id === id ? { ...w, isMaximized: !w.isMaximized } : w
-      )
-    );
+    setWindows((prev) => maximizeWindowIn(prev, id));
   }, []);
 
-  return { windows, openWindow, closeWindow, minimizeWindow, maximizeWindow, focusWindow };
+  // Explicit direction (not a toggle, unlike maximizeWindow) -- the two callers (an automatic
+  // tool-call trigger, a manual restore button) each already know exactly which state they
+  // want. Compact is a render-time override of the stored frame: it clears neither
+  // isMaximized nor the frame, so expanding returns to exactly where the window was.
+  const setWindowCompact = useCallback((id: string, compact: boolean) => {
+    setWindows((prev) => {
+      const next = setCompactIn(prev, id, compact);
+      return compact && next !== prev ? bringToFront(next, id) : next;
+    });
+  }, []);
+
+  const setWindowGeometry = useCallback((id: string, patch: { position?: Point; size?: Size }) => {
+    setWindows((prev) => setGeometryIn(prev, id, patch, getViewport()));
+  }, []);
+
+  const clampWindowsToViewport = useCallback(() => {
+    setWindows((prev) => clampAllIn(prev, getViewport()));
+  }, []);
+
+  return {
+    windows, openWindow, restoreWindow, closeWindow, minimizeWindow, maximizeWindow,
+    focusWindow, setWindowCompact, setWindowGeometry, clampWindowsToViewport,
+  };
 }
