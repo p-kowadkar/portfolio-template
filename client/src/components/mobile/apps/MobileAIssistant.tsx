@@ -5,15 +5,13 @@
 // server-side in backend/main.py, never in the client bundle.
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, ChevronLeft } from 'lucide-react';
+import { Send, ChevronLeft, SquarePen } from 'lucide-react';
 import { dispatchToolCall } from '../../../lib/toolDispatch';
+import { useAIssistantConversation, type AIssistantMessage } from '../../../hooks/useAIssistantConversation';
+
+type Message = AIssistantMessage;
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
-
-interface Message {
-  role: 'user' | 'model';
-  content: string;
-}
 
 const SUGGESTED = [
   "What's Pranav building right now?",
@@ -33,11 +31,35 @@ const APP_ID_TO_MOBILE_SCREEN: Record<string, string> = {
 };
 
 export default function MobileAIssistant({ onClose, onOpenApp }: { onClose: () => void; onOpenApp?: (id: string, params?: Record<string, unknown>) => void }) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  // The conversation survives going Home and coming back (and a page reload), and is
+  // shared with the desktop AIssistant, so it also follows a phone rotating across the
+  // shell swap. The greeting is rendered as static JSX below, so `messages` holds only
+  // the real turns.
+  const chat = useAIssistantConversation(loading);
+  const messages = chat.turns;
+  const setMessages = chat.setTurns;
+  const [input, setInput] = useState(chat.restoredInput);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // The in-flight /api/chat request. AIssistant had no way to cancel it, so going Home
+  // mid-reply still ran the tool-call dispatch when the answer arrived and could pop an
+  // overlay open over the springboard. Aborted on unmount and when the conversation is
+  // reset. There's no "screen is open" signal on mobile the way the desktop window has
+  // one (see ChatPKApp.tsx), so a reply landing inside the ~300ms exit animation when the
+  // visitor backs out can still get processed -- a known, accepted gap, same as the live
+  // site's own mobile AIssistant.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
+
+  const startNewConversation = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    chat.reset();
+    setLoading(false);
+    setInput('');
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -48,6 +70,8 @@ export default function MobileAIssistant({ onClose, onOpenApp }: { onClose: () =
     if (!content || loading) return;
     setInput('');
     const newMessages: Message[] = [...messages, { role: 'user', content }];
+    const controller = new AbortController();
+    abortRef.current = controller;
     setMessages(newMessages);
     setLoading(true);
     try {
@@ -60,6 +84,7 @@ export default function MobileAIssistant({ onClose, onOpenApp }: { onClose: () =
             message: content,
             history: newMessages.slice(0, -1).slice(-10).map((m) => ({ role: m.role, content: m.content })),
           }),
+          signal: controller.signal,
         });
         if (res.ok) {
           const data = await res.json();
@@ -76,15 +101,28 @@ export default function MobileAIssistant({ onClose, onOpenApp }: { onClose: () =
           }
         }
       }
+      // The screen was left (or the conversation reset) while this was in flight: a reply
+      // from an AIssistant that's gone must not open overlays or append to a conversation
+      // that no longer exists.
+      if (controller.signal.aborted) return;
       if (!reply) {
         reply = "I can't reach my knowledge base right now. Reach out to Pranav directly at pk.kowadkar@gmail.com or Telegram @pk_kowadkar — he's usually quick to respond!";
       }
       setMessages([...newMessages, { role: 'model', content: reply }]);
     } catch {
+      // Deliberate (screen left / new conversation), not an outage: no "can't reach" bubble.
+      if (controller.signal.aborted) return;
       setMessages([...newMessages, { role: 'model', content: "I can't reach my knowledge base right now. Contact Pranav at pk.kowadkar@gmail.com or @pk_kowadkar on Telegram." }]);
     } finally {
-      setLoading(false);
-      setTimeout(() => inputRef.current?.focus(), 100);
+      // Only a request that finished normally clears `loading` (a reset already did, and
+      // an unmounted AIssistant has nothing to update). Left set on an abort, the stored
+      // inFlight flag stays true, so the unanswered question is handed back to the input
+      // on the next open.
+      if (abortRef.current === controller && !controller.signal.aborted) {
+        abortRef.current = null;
+        setLoading(false);
+        setTimeout(() => inputRef.current?.focus(), 100);
+      }
     }
   };
 
@@ -105,6 +143,16 @@ export default function MobileAIssistant({ onClose, onOpenApp }: { onClose: () =
             <p className="text-green-400 text-[11px]">Pranav's AI Guide · online</p>
           </div>
         </div>
+        {messages.length > 0 && (
+          <button
+            onClick={startNewConversation}
+            aria-label="New conversation"
+            className="flex items-center justify-center w-9 h-9 rounded-full text-white/60"
+            style={{ border: '1px solid rgba(255,255,255,0.12)' }}
+          >
+            <SquarePen size={16} />
+          </button>
+        )}
       </div>
 
       {/* Messages */}

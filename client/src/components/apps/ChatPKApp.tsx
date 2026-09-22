@@ -6,31 +6,59 @@
 // bigger tradeoff than swapping in a client-exposed key here; the backend is
 // a few minutes to deploy (see the README) and worth doing properly.
 // Color: #0a0a0a bg, #E50914 accent, #f5f5f1 body
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send } from 'lucide-react';
+import { Send, SquarePen } from 'lucide-react';
 import { dispatchToolCall } from '../../lib/toolDispatch';
 import { useOpenWindow } from '../../contexts/WindowActionsContext';
+import { useIsWindowOpen } from '../../contexts/WindowParamsContext';
+import { useAIssistantConversation, type AIssistantMessage } from '../../hooks/useAIssistantConversation';
 
-interface Message {
-  role: 'user' | 'model';
-  content: string;
-}
+type Message = AIssistantMessage;
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
+// Not part of the persisted conversation (see useAIssistantConversation.ts): always
+// re-seeded as messages[0].
+const GREETING: Message = {
+  role: 'model',
+  content: "Hey! I'm AIssistant — Pranav's AI Guide. Ask me anything about his work, projects, or background.",
+};
+
 export default function ChatPKApp() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'model',
-      content: "Hey! I'm AIssistant — Pranav's AI Guide. Ask me anything about his work, projects, or background.",
-    },
-  ]);
-  const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  // The conversation survives closing the window and page reloads. `loading` tells it a
+  // request is in flight, so a question that never got an answer is handed back to the
+  // input box on the next open instead of hanging there as an orphan.
+  const chat = useAIssistantConversation(loading);
+  const setTurns = chat.setTurns;
+  const messages = useMemo<Message[]>(() => [GREETING, ...chat.turns], [chat.turns]);
+  const [input, setInput] = useState(chat.restoredInput);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const openWindow = useOpenWindow();
+
+  // The in-flight /api/chat request. ChatPKApp had no way to cancel it, so closing the
+  // window mid-reply still ran dispatchToolCall when the answer arrived, and could pop
+  // windows open from an AIssistant that was already gone. Aborted on unmount only --
+  // NOT when the window's `isOpen` flag flips, which happens a beat before the exit
+  // animation finishes and the component actually unmounts. Aborting on that earlier
+  // signal would clobber the stored inFlight flag via this same abort's `finally` (see
+  // sendMessage), so a reply landing in that gap is dropped there instead, leaving
+  // `loading` set so the orphaned question is still restored on the next open.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
+  const chatOpen = useIsWindowOpen('chat');
+  const chatOpenRef = useRef(chatOpen);
+  chatOpenRef.current = chatOpen;
+
+  const startNewConversation = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    chat.reset();
+    setLoading(false);
+    setInput('');
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -47,7 +75,9 @@ export default function ChatPKApp() {
     if (!text || loading) return;
 
     const userMsg: Message = { role: 'user', content: text };
-    setMessages((prev) => [...prev, userMsg]);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setTurns((prev) => [...prev, userMsg]);
     setInput('');
     setLoading(true);
     // Re-focus the input after sending
@@ -65,10 +95,17 @@ export default function ChatPKApp() {
             message: text,
             history: messages.slice(-10).map((m) => ({ role: m.role, content: m.content })),
           }),
+          signal: controller.signal,
         });
         if (!res.ok) throw new Error(`Backend error: ${res.status}`);
         const data = await res.json();
         reply = data.reply;
+
+        // The window was closed while this was in flight: a reply from an AIssistant
+        // that's gone must not open windows or append to a conversation that no longer
+        // exists on screen.
+        if (controller.signal.aborted || !chatOpenRef.current) return;
+
         if (data.tool_call) {
           dispatchToolCall(data.tool_call, {
             openCanvas: (project) => openWindow('canvas', { project }),
@@ -80,11 +117,16 @@ export default function ChatPKApp() {
         reply = "AIssistant isn't fully configured yet — reach out to Pranav directly at pk.kowadkar@gmail.com.";
       }
 
+      if (controller.signal.aborted || !chatOpenRef.current) return;
       if (!reply) throw new Error('Empty reply');
-      setMessages((prev) => [...prev, { role: 'model', content: reply }]);
+      setTurns((prev) => [...prev, { role: 'model', content: reply }]);
     } catch (err) {
+      // Deliberate (window closed / new conversation), not an outage: no "backend is
+      // offline" bubble.
+      if (!chatOpenRef.current) return;
+      if (controller.signal.aborted || (err as { name?: string })?.name === 'AbortError') return;
       console.error('AIssistant error:', err);
-      setMessages((prev) => [
+      setTurns((prev) => [
         ...prev,
         {
           role: 'model',
@@ -92,7 +134,15 @@ export default function ChatPKApp() {
         },
       ]);
     } finally {
-      setLoading(false);
+      // Only a request that finished normally, in an open window, clears `loading`. A
+      // reset already did. When the window was closed under it, `loading` is left set ON
+      // PURPOSE: it is what keeps the stored inFlight flag true, so the unanswered
+      // question is handed back to the input on the next open instead of hanging in the
+      // thread with no reply.
+      if (abortRef.current === controller && !controller.signal.aborted && chatOpenRef.current) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   };
 
@@ -128,8 +178,27 @@ export default function ChatPKApp() {
             <span style={{ fontFamily: "'DM Mono', monospace", fontSize: '10px', color: '#30d158' }}>online</span>
           </div>
         </div>
-        <div style={{ marginLeft: 'auto', fontFamily: "'DM Mono', monospace", fontSize: '9px', color: 'rgba(255,255,255,0.2)', letterSpacing: '0.08em' }}>
-          {API_URL ? 'live rag' : 'static'}
+        <div className="flex items-center gap-3" style={{ marginLeft: 'auto' }}>
+          {chat.turns.length > 0 && (
+            <button
+              onClick={startNewConversation}
+              aria-label="New conversation"
+              title="New conversation"
+              className="flex items-center justify-center transition-colors"
+              style={{
+                width: '28px', height: '28px', borderRadius: '50%', cursor: 'pointer',
+                background: 'transparent', border: '1px solid rgba(255,255,255,0.12)',
+                color: 'rgba(255,255,255,0.55)',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#f0f0f2'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; }}
+            >
+              <SquarePen size={13} />
+            </button>
+          )}
+          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: '9px', color: 'rgba(255,255,255,0.2)', letterSpacing: '0.08em' }}>
+            {API_URL ? 'live rag' : 'static'}
+          </div>
         </div>
       </div>
 
