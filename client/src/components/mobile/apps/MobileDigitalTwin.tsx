@@ -15,6 +15,9 @@ import { useSimliAvatar } from '@/hooks/useSimliAvatar';
 import { usePersistFn } from '@/hooks/usePersistFn';
 import { useCaptions, captionWindow } from '@/hooks/useCaptions';
 import { dispatchToolCall } from '@/lib/toolDispatch';
+import { useCallTeardown } from '@/hooks/useCallTeardown';
+import { useCallTimer } from '@/hooks/useCallTimer';
+import type { SREvent, SpeechRecognitionType, SpeechRecognitionConstructor } from '@/lib/speechRecognition';
 
 // Backend's open_app ids -> mobile's own screen ids. Canvas/scheduler ids
 // already match (both sides use 'canvas'/'scheduler'), so only 'cv' needs
@@ -34,35 +37,6 @@ const MIN_CONNECTING_MS = 1100;
 type Phase = 'ringing' | 'connecting' | 'active' | 'ended' | 'blocked';
 interface Message { role: 'user' | 'pk'; content: string; ts: number; }
 
-// ── Speech types ──────────────────────────────────────────────────────────────
-interface SRResult { readonly transcript: string; }
-interface SRResultList { readonly length: number; readonly isFinal: boolean; [index: number]: SRResult; }
-interface SREvent { readonly results: { length: number; [index: number]: SRResultList; }; }
-type SpeechRecognitionType = {
-  continuous: boolean; interimResults: boolean; lang: string;
-  onresult: ((e: SREvent) => void) | null;
-  onerror: (() => void) | null; onend: (() => void) | null;
-  start: () => void; stop: () => void;
-};
-type SpeechRecognitionConstructor = new () => SpeechRecognitionType;
-declare global {
-  interface Window {
-    SpeechRecognition: SpeechRecognitionConstructor;
-    webkitSpeechRecognition: SpeechRecognitionConstructor;
-  }
-}
-
-// ── Timer ─────────────────────────────────────────────────────────────────────
-function useCallTimer(active: boolean) {
-  const [s, setS] = useState(0);
-  useEffect(() => {
-    if (!active) { setS(0); return; }
-    const id = setInterval(() => setS(n => n + 1), 1000);
-    return () => clearInterval(id);
-  }, [active]);
-  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () => void; onOpenApp?: (id: string, params?: Record<string, unknown>) => void }) {
   const [phase, setPhase] = useState<Phase>('ringing');
@@ -77,19 +51,28 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
   // Call-rate gate — see VideoCallApp.tsx for the full rationale.
   const [gate, setGate] = useState<'pending' | 'allowed' | 'blocked'>('pending');
   const [blockReason, setBlockReason] = useState<BlockReason | null>(null);
-  const callTimer = useCallTimer(phase === 'active');
+  const callTimer = useCallTimer(phase === 'active', phase === 'ringing' || phase === 'connecting');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionType | null>(null);
   const callSessionIdRef = useRef<string>('');
+  // The in-flight /api/chat request -- aborted by call.teardownVoice(). See
+  // VideoCallApp.tsx / useCallTeardown.ts for the full rationale.
+  const chatAbortRef = useRef<AbortController | null>(null);
   const avatar = useSimliAvatar({ onSpeakingChange: setSpeaking });
   const captions = useCaptions(speaking);
   const connectStartedRef = useRef(0);
   const beganActiveRef = useRef(false);
   const endReportedRef = useRef(true);
-  const phaseRef = useRef(phase);
-  phaseRef.current = phase;
   const inCall = phase === 'connecting' || phase === 'active';
+
+  // The one shared teardown for the voice pipeline -- see VideoCallApp.tsx / useCallTeardown.ts.
+  const call = useCallTeardown({
+    chatAbortRef,
+    recognitionRef,
+    avatarInterrupt: avatar.interrupt,
+    onMicOff: () => setMicOn(false),
+  });
 
   // Real connecting phase — see VideoCallApp.tsx for the full rationale. Waits for
   // the avatar to genuinely come up (or settle as failed) before greeting.
@@ -158,6 +141,7 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
     beganActiveRef.current = false;
     endReportedRef.current = false;
     connectStartedRef.current = Date.now();
+    call.beginCall();
     setGate('pending');
     setBlockReason(null);
     avatar.prefetchToken(sessionId);
@@ -169,10 +153,9 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
     checkCallStart(sessionId).then(result => {
       if (callSessionIdRef.current !== sessionId) return;
       if (result.status === 'blocked') {
-        if (phaseRef.current !== 'connecting' && phaseRef.current !== 'active') return;
+        if (!call.isLive()) return; // already torn down (declined, closed) while the gate was answering
         endReportedRef.current = true; // 429 → server inserted no row
-        window.speechSynthesis?.cancel();
-        recognitionRef.current?.stop();
+        call.teardownVoice();
         setBlockReason(result.reason);
         setGate('blocked');
         setPhase('blocked');
@@ -200,11 +183,21 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
   });
 
   const endCall = () => {
-    window.speechSynthesis?.cancel();
-    recognitionRef.current?.stop();
+    call.teardownVoice();
     captions.clearCaption();
     setPhase('ended');
   };
+
+  // Idempotent — see VideoCallApp.tsx's handleCapReached for the full rationale.
+  const handleCapReached = usePersistFn(() => {
+    if (!call.isLive()) return;
+    call.teardownVoice();
+    setSpeaking(false);
+    const capText = "We've hit the time limit for this call — let's keep going over email: pk.kowadkar@gmail.com!";
+    setMessages(prev => [...prev, { role: 'pk', content: capText, ts: Date.now() }]);
+    captions.showCaption(capText);
+    call.scheduleCapHangup(endCall, 2500);
+  });
 
   // Speak a line — Simli avatar first, falling back to the legacy MP3/browser-TTS
   // path (callAudio.ts) if the avatar never came up or died mid-call.
@@ -222,9 +215,15 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
   };
 
   const sendMessage = useCallback(async (text: string) => {
-    if (!text.trim() || loading) return;
+    if (!text.trim() || loading || !call.isLive()) return;
     setMessages(prev => [...prev, { role: 'user', content: text.trim(), ts: Date.now() }]);
     setInput(''); setTranscript(''); setLoading(true);
+
+    // Tracked so call.teardownVoice() can abort this request from any exit path — see
+    // VideoCallApp.tsx / useCallTeardown.ts.
+    const controller = new AbortController();
+    chatAbortRef.current = controller;
+
     try {
       let reply = '';
       if (API_URL) {
@@ -233,10 +232,13 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Call-Session-Id': callSessionIdRef.current },
           body: JSON.stringify({ message: text.trim(), history, persona: 'digital_twin' }),
+          signal: controller.signal,
         });
+        if (!call.isLive() || controller.signal.aborted) return;
         if (res.status === 429) throw new CallCapReachedError();
         if (!res.ok) throw new Error(`${res.status}`);
         const data = await res.json();
+        if (!call.isLive() || controller.signal.aborted) return;
         reply = data.reply;
         if (data.tool_call && onOpenApp) {
           dispatchToolCall(data.tool_call, {
@@ -257,19 +259,17 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
         await speakLine(reply);
       }
     } catch (err) {
+      if (controller.signal.aborted) return; // deliberate teardown, not a failure
       if (err instanceof CallCapReachedError) {
-        const capText = "We've hit the time limit for this call — let's keep going over email: pk.kowadkar@gmail.com!";
-        setMessages(prev => [...prev, { role: 'pk', content: capText, ts: Date.now() }]);
-        captions.showCaption(capText);
-        setSpeaking(false);
-        avatar.interrupt();
-        setTimeout(() => endCall(), 2500);
+        handleCapReached();
         return;
       }
+      if (!call.isLive()) return; // torn down while the request was failing
       const errText = "Connection issue — try again in a sec!";
       setMessages(prev => [...prev, { role: 'pk', content: errText, ts: Date.now() }]);
       captions.showCaption(errText);
     } finally {
+      if (chatAbortRef.current === controller) chatAbortRef.current = null;
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     }

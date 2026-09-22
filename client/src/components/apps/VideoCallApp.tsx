@@ -59,6 +59,9 @@ import { usePersistFn } from '@/hooks/usePersistFn';
 import { useCaptions, captionWindow } from '@/hooks/useCaptions';
 import { dispatchToolCall } from '@/lib/toolDispatch';
 import { useOpenWindow } from '@/contexts/WindowActionsContext';
+import { useCallTeardown } from '@/hooks/useCallTeardown';
+import { useCallTimer } from '@/hooks/useCallTimer';
+import type { SREvent, SpeechRecognitionType, SpeechRecognitionConstructor } from '@/lib/speechRecognition';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 // Replace with your own reference photo — see the setup note above.
@@ -78,41 +81,6 @@ interface Message {
   ts: number;
 }
 
-// ─── Web Speech API types ─────────────────────────────────────────────────────
-interface SRResult { readonly transcript: string; }
-interface SRResultList { readonly length: number; readonly isFinal: boolean; [index: number]: SRResult; }
-interface SREvent { readonly results: { length: number; [index: number]: SRResultList; }; }
-type SpeechRecognitionType = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: ((e: SREvent) => void) | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-type SpeechRecognitionConstructor = new () => SpeechRecognitionType;
-declare global {
-  interface Window {
-    SpeechRecognition: SpeechRecognitionConstructor;
-    webkitSpeechRecognition: SpeechRecognitionConstructor;
-  }
-}
-
-// ─── Call timer ───────────────────────────────────────────────────────────────
-function useCallTimer(active: boolean) {
-  const [seconds, setSeconds] = useState(0);
-  useEffect(() => {
-    if (!active) { setSeconds(0); return; }
-    const id = setInterval(() => setSeconds(s => s + 1), 1000);
-    return () => clearInterval(id);
-  }, [active]);
-  const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
-  const ss = String(seconds % 60).padStart(2, '0');
-  return `${mm}:${ss}`;
-}
-
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function VideoCallApp() {
   const [phase, setPhase] = useState<Phase>('ringing');
@@ -130,12 +98,16 @@ export default function VideoCallApp() {
   const [gate, setGate] = useState<'pending' | 'allowed' | 'blocked'>('pending');
   const [blockReason, setBlockReason] = useState<BlockReason | null>(null);
 
-  const callTimer = useCallTimer(phase === 'active');
+  const callTimer = useCallTimer(phase === 'active', phase === 'ringing' || phase === 'connecting');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionType | null>(null);
   const ringtoneRef = useRef<HTMLAudioElement | null>(null);
   const callSessionIdRef = useRef<string>('');
+  // The in-flight /api/chat request -- aborted by call.teardownVoice() so a dead call
+  // can't have its late reply spoken through a detached fallback Audio. See
+  // useCallTeardown.ts for why this needs to exist at all.
+  const chatAbortRef = useRef<AbortController | null>(null);
   const avatar = useSimliAvatar({ onSpeakingChange: setSpeaking });
   const captions = useCaptions(speaking);
   const openWindow = useOpenWindow();
@@ -143,9 +115,17 @@ export default function VideoCallApp() {
   const beganActiveRef = useRef(false);
   // true = nothing to report to /api/call/end (no server row exists for this call)
   const endReportedRef = useRef(true);
-  const phaseRef = useRef(phase);
-  phaseRef.current = phase; // guards the async 429 handler against stale phases
   const inCall = phase === 'connecting' || phase === 'active';
+
+  // The one shared teardown for the voice pipeline -- every exit path (End, blocked,
+  // cap-reached, and unmount) runs through call.teardownVoice() instead of hand-rolling
+  // its own subset of these steps. See useCallTeardown.ts.
+  const call = useCallTeardown({
+    chatAbortRef,
+    recognitionRef,
+    avatarInterrupt: avatar.interrupt,
+    onMicOff: () => setMicOn(false),
+  });
 
   // Real connecting phase — waits for the avatar to genuinely come up (or settle as
   // failed) before greeting, instead of a fixed timer. Floor of MIN_CONNECTING_MS
@@ -237,6 +217,7 @@ export default function VideoCallApp() {
     beganActiveRef.current = false;
     endReportedRef.current = false; // a server row may exist from here on
     connectStartedRef.current = Date.now();
+    call.beginCall();
     setGate('pending');
     setBlockReason(null);
     avatar.prefetchToken(sessionId);
@@ -250,10 +231,9 @@ export default function VideoCallApp() {
     checkCallStart(sessionId).then(result => {
       if (callSessionIdRef.current !== sessionId) return; // superseded by a newer call
       if (result.status === 'blocked') {
-        if (phaseRef.current !== 'connecting' && phaseRef.current !== 'active') return;
+        if (!call.isLive()) return; // already torn down (declined, closed) while the gate was answering
         endReportedRef.current = true; // 429 → server inserted no row, nothing to report
-        window.speechSynthesis?.cancel();
-        stopListening();
+        call.teardownVoice();
         setBlockReason(result.reason);
         setGate('blocked');
         setPhase('blocked'); // inCall→false, so the cleanup effect stops the avatar
@@ -288,11 +268,27 @@ export default function VideoCallApp() {
   // Decline / end call
   const endCall = () => {
     (ringtoneRef.current as any)?.pause?.();
-    window.speechSynthesis?.cancel();
-    stopListening();
+    call.teardownVoice();
     captions.clearCaption();
     setPhase('ended');
   };
+
+  // Idempotent: the server's 10-minute cap can 429 more than one in-flight request, and
+  // this must not arm more than one hangup timer for it. First line always bails if the
+  // call is already torn down (End clicked in the same instant, or a stale call).
+  const handleCapReached = usePersistFn(() => {
+    if (!call.isLive()) return;
+    call.teardownVoice(); // clears any stale cap timer too, so the hangup below is the only one
+    setSpeaking(false);
+    const capMsg: Message = {
+      role: 'pk',
+      content: "We've hit the time limit for this call — let's keep going over email: pk.kowadkar@gmail.com!",
+      ts: Date.now(),
+    };
+    setMessages(prev => [...prev, capMsg]);
+    captions.showCaption(capMsg.content);
+    call.scheduleCapHangup(endCall, 2500);
+  });
 
   // Speak a line — Simli avatar first (lips move, video crossfades in), falling back
   // to the legacy MP3/browser-TTS path (callAudio.ts) if the avatar never came up or
@@ -342,7 +338,7 @@ export default function VideoCallApp() {
 
   // Send message to backend
   const sendMessage = useCallback(async (text: string) => {
-    if (!text.trim() || loading) return;
+    if (!text.trim() || loading || !call.isLive()) return;
 
     // Director mode — dev builds only, see the comment above handleDirectorPaste.
     if (import.meta.env.DEV && text.trim().startsWith('//')) {
@@ -360,6 +356,11 @@ export default function VideoCallApp() {
     setTranscript('');
     setLoading(true);
 
+    // Tracked so call.teardownVoice() can abort this request from any exit path (End,
+    // blocked, cap-reached, unmount) — see useCallTeardown.ts.
+    const controller = new AbortController();
+    chatAbortRef.current = controller;
+
     try {
       let reply = '';
       if (API_URL) {
@@ -375,10 +376,15 @@ export default function VideoCallApp() {
             history,
             persona: 'digital_twin', // hint to backend to use first-person
           }),
+          signal: controller.signal,
         });
+        // The call may have been torn down (End, blocked, cap, unmount) while this was
+        // in flight — don't act on a dead call's reply: no message, no speech, no tool call.
+        if (!call.isLive() || controller.signal.aborted) return;
         if (res.status === 429) throw new CallCapReachedError();
         if (!res.ok) throw new Error(`Backend ${res.status}`);
         const data = await res.json();
+        if (!call.isLive() || controller.signal.aborted) return;
         reply = data.reply;
         if (data.tool_call) {
           dispatchToolCall(data.tool_call, {
@@ -399,19 +405,12 @@ export default function VideoCallApp() {
         await speakLine(reply);
       }
     } catch (err) {
+      if (controller.signal.aborted) return; // deliberate teardown, not a failure
       if (err instanceof CallCapReachedError) {
-        const capMsg: Message = {
-          role: 'pk',
-          content: "We've hit the time limit for this call — let's keep going over email: pk.kowadkar@gmail.com!",
-          ts: Date.now(),
-        };
-        setMessages(prev => [...prev, capMsg]);
-        captions.showCaption(capMsg.content);
-        setSpeaking(false);
-        avatar.interrupt();
-        setTimeout(() => endCall(), 2500);
+        handleCapReached();
         return;
       }
+      if (!call.isLive()) return; // torn down while the request was failing
       console.error('Digital twin error:', err);
       const errMsg: Message = {
         role: 'pk',
@@ -421,6 +420,7 @@ export default function VideoCallApp() {
       setMessages(prev => [...prev, errMsg]);
       captions.showCaption(errMsg.content);
     } finally {
+      if (chatAbortRef.current === controller) chatAbortRef.current = null;
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
