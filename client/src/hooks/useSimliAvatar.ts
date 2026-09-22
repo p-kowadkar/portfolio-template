@@ -59,7 +59,19 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
 
   const clientRef = useRef<SimliClient | null>(null);
   const stateRef = useRef<AvatarInternalState>('idle');
-  const epochRef = useRef(0);
+  // Two counters, on purpose. They used to be one, and every interrupt() -- which runs on
+  // EVERY barge-in -- then also orphaned the connection:
+  //  - startEpochRef identifies the current CONNECTION (bumped by start()/stop()). The
+  //    client's event handlers and start()'s own awaits compare against it. With a shared
+  //    counter, an interrupt while the avatar was still 'starting' made the late 'start'
+  //    event get ignored (the avatar never went live, though its client stayed connected),
+  //    and after the FIRST user message of any call the client's 'speaking'/'silent'
+  //    events were ignored for the rest of it.
+  //  - feedEpochRef identifies the current UTTERANCE (bumped by interrupt()/stop()/start()).
+  //    speak() compares against it, so a barge-in unwinds a send that is mid-flight
+  //    without touching the connection.
+  const startEpochRef = useRef(0);
+  const feedEpochRef = useRef(0);
   const tokenPromiseRef = useRef<Promise<string | null> | null>(null);
   const startPromiseRef = useRef<Promise<void> | null>(null);
   // Tracks whether a 'speaking' event fired for the CURRENT speak() call, so a
@@ -107,13 +119,14 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
   });
 
   const start = usePersistFn((sessionId: string) => {
-    const epoch = ++epochRef.current;
+    const epoch = ++startEpochRef.current;
+    feedEpochRef.current++; // a new connection also retires any utterance still unwinding from the last one
     stateRef.current = 'starting';
     setFailed(false);
 
     startPromiseRef.current = (async () => {
       const token = tokenPromiseRef.current ? await tokenPromiseRef.current : await fetchToken(sessionId);
-      if (epoch !== epochRef.current) return; // superseded (unmount/re-call/StrictMode)
+      if (epoch !== startEpochRef.current) return; // superseded (unmount/re-call/StrictMode)
       if (!token) { failPermanently(); return; }
       if (!videoRef.current || !audioRef.current) { failPermanently(); return; }
 
@@ -130,7 +143,7 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
       client.on('start', () => {
         // Guards against the SDK's missing-`break` fallthrough (an ERROR frame can
         // emit 'error' then a ghost 'speaking'/'start') resurrecting a failed client.
-        if (epoch !== epochRef.current || stateRef.current !== 'starting') return;
+        if (epoch !== startEpochRef.current || stateRef.current !== 'starting') return;
         stateRef.current = 'live';
         setLive(true);
         // Prime the pipeline with a short silent chunk, same as Simli's own demo --
@@ -138,7 +151,7 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
         try { client.sendAudioData(new Uint8Array(CHUNK_BYTES)); } catch { /* WS not open yet */ }
       });
       const stillActive = () =>
-        epoch === epochRef.current && (stateRef.current === 'starting' || stateRef.current === 'live');
+        epoch === startEpochRef.current && (stateRef.current === 'starting' || stateRef.current === 'live');
       client.on('speaking', () => {
         if (!stillActive()) return;
         spokeThisTurnRef.current = true;
@@ -148,7 +161,7 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
         if (!stillActive()) return;
         onSpeakingChange(false);
       });
-      const onFail = () => { if (epoch === epochRef.current) failPermanently(); };
+      const onFail = () => { if (epoch === startEpochRef.current) failPermanently(); };
       client.on('startup_error', onFail);
       client.on('error', onFail);
       client.on('stop', onFail);
@@ -157,10 +170,10 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
       try {
         await client.start();
       } catch {
-        if (epoch === epochRef.current) failPermanently();
+        if (epoch === startEpochRef.current) failPermanently();
         return;
       }
-      if (epoch !== epochRef.current) return;
+      if (epoch !== startEpochRef.current) return;
       // Belt-and-braces for iOS autoplay policy (also blessed synchronously in the
       // click gesture by the caller, now that the elements are always mounted).
       videoRef.current?.play().catch(() => {});
@@ -169,7 +182,8 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
   });
 
   const stop = usePersistFn(() => {
-    epochRef.current++; // cancels any in-flight start/speak
+    startEpochRef.current++; // cancels any in-flight start
+    feedEpochRef.current++; // ...and any in-flight speak
     const client = clientRef.current;
     if (client) {
       try { client.ClearBuffer(); } catch { /* no-op */ }
@@ -186,6 +200,14 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
   });
 
   const interrupt = usePersistFn(() => {
+    // Bump the utterance epoch too, not just clear the buffer -- without this, a speak()
+    // call already mid-flight (its chunk-send loop, or its post-loop wait for the 'silent'
+    // event) has no way to know it's been superseded, and keeps running: it clears the
+    // buffer once here, then immediately refills it with the rest of the SAME sentence's
+    // remaining chunks. The client stays live/connected (unlike stop()) -- only the current
+    // speak() call unwinds. Deliberately NOT the connection epoch: see the comment on
+    // startEpochRef.
+    feedEpochRef.current++;
     try { clientRef.current?.ClearBuffer(); } catch { /* no-op */ }
   });
 
@@ -198,15 +220,15 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
     }
     if (stateRef.current !== 'live' || !clientRef.current) return false;
 
-    const epoch = epochRef.current;
+    const epoch = feedEpochRef.current;
     spokeThisTurnRef.current = false;
     try {
       const pcm = await fetchTtsPcm(text, sessionId); // throws CallCapReachedError on 429
-      if (epoch !== epochRef.current) return true; // call ended mid-fetch; not a failure
+      if (epoch !== feedEpochRef.current) return true; // call ended mid-fetch; not a failure
 
       const client = clientRef.current;
       for (let i = 0; i < pcm.length; i += CHUNK_BYTES) {
-        if (epoch !== epochRef.current) return true;
+        if (epoch !== feedEpochRef.current) return true;
         client.sendAudioData(pcm.slice(i, i + CHUNK_BYTES));
         if ((i / CHUNK_BYTES) % 8 === 7) await sleep(0); // yield to the event loop
       }
@@ -215,7 +237,7 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
       const deadline = Date.now() + hardTimeoutMs;
       await new Promise<void>((resolve) => {
         const check = () => {
-          if (epoch !== epochRef.current) { resolve(); return; }
+          if (epoch !== feedEpochRef.current) { resolve(); return; }
           if (Date.now() >= deadline) { resolve(); return; }
           setTimeout(check, 100);
         };
@@ -234,8 +256,16 @@ export function useSimliAvatar(opts: { onSpeakingChange: (speaking: boolean) => 
     }
   });
 
+  // Whether feeding the avatar can possibly work: connecting or live. When it can't (never
+  // started because Simli isn't configured, failed, or stopped), speak() always falls
+  // through to the caller's fallback path anyway -- exported so a future TTS queue (see
+  // window-lifecycle-port-plan.md's Sprint 1 notes) can skip an avatar-only PCM prefetch
+  // when it isn't usable, the same way the live site's O2 fix does. Read fresh, by design
+  // (a ref, not state).
+  const canFeed = usePersistFn(() => stateRef.current === 'starting' || stateRef.current === 'live');
+
   // Unmount safety net.
   useEffect(() => () => stop(), [stop]);
 
-  return { videoRef, audioRef, live, failed, prefetchToken, start, stop, interrupt, speak };
+  return { videoRef, audioRef, live, failed, prefetchToken, start, stop, interrupt, speak, canFeed };
 }
