@@ -12,63 +12,97 @@
  *  - Window shadow: deep drop shadow when focused, lighter when not
  */
 
-import { useRef, useState } from 'react';
+import { memo, useState } from 'react';
 import { Rnd } from 'react-rnd';
 import { motion } from 'framer-motion';
 import type { WindowState, WindowManager } from '../hooks/useWindowManager';
+import { MENUBAR_H, MIN_W, MIN_H, getViewport, initialFrame, type Area, type Frame } from '../lib/windowState';
 
 interface WindowProps extends WindowState {
   onClose: WindowManager['closeWindow'];
   onMinimize: WindowManager['minimizeWindow'];
   onMaximize: WindowManager['maximizeWindow'];
   onFocus: WindowManager['focusWindow'];
+  /** A drag/resize finished: write the window's new frame back to the manager. */
+  onGeometryChange: WindowManager['setWindowGeometry'];
+  /** The desktop area (viewport minus the menu bar and Dock zone): what maximize and the
+   *  compact bubble are sized and placed from. */
+  area: Area;
   children: React.ReactNode;
   isFocused?: boolean;
 }
 
-export default function Window({
+// Compact bubble geometry — top-right corner, small enough to stay out of the
+// way while still being legible. Fixed size rather than dynamic: the caller's
+// own content (e.g. VideoCallApp's optional message-input row) reveals within
+// this fixed box via its own internal flex layout, so Window.tsx never needs a
+// data path from deep inside `children` back up to size the Rnd container.
+const COMPACT_WIDTH = 240;
+const COMPACT_HEIGHT = 200;
+
+function Window({
   id,
   title,
   isOpen,
   isMinimized,
   isMaximized,
+  isCompact,
   zIndex,
-  defaultPosition,
+  position,
+  size,
+  defaultOffset,
   defaultSize,
+  area,
   onClose,
   onMinimize,
   onMaximize,
   onFocus,
+  onGeometryChange,
   children,
   isFocused = true,
 }: WindowProps) {
-  const rndRef = useRef<Rnd | null>(null);
   const [trafficHovered, setTrafficHovered] = useState(false);
 
   if (!isOpen || isMinimized) return null;
 
-  const maxSize = isMaximized
-    ? { width: window.innerWidth, height: window.innerHeight - 28 - 80 }
-    : undefined;
-  const maxPos = isMaximized ? { x: 0, y: 28 } : undefined;
+  // The frame the manager stores for this window. (It is always set once a window is open; the
+  // fallback is only for the instant of an exit animation on a window that was never sized.)
+  const stored: Frame = position && size ? { position, size } : initialFrame({ defaultOffset, defaultSize }, getViewport());
+
+  // What is actually on screen. A bubble and a maximized window are RENDER-TIME overrides of the
+  // stored frame -- they never overwrite it, so un-maximize and expanding a bubble return to
+  // exactly where the window was. Rnd is fully controlled (position and size are always given):
+  // when it was only sometimes controlled, react-draggable kept the last controlled value and
+  // a window came back from maximize/compact in the wrong place.
+  const frame: Frame = isCompact
+    ? {
+        position: { x: area.width - COMPACT_WIDTH - 20, y: 40 },
+        size: { width: COMPACT_WIDTH, height: COMPACT_HEIGHT },
+      }
+    : isMaximized
+      // The legacy numbers, kept identical so this change carries no unrelated visual diff: y is
+      // the menu bar's height inside a desktop area that is already offset by it, and the height
+      // stops 8px short of the area's bottom.
+      ? { position: { x: 0, y: MENUBAR_H }, size: { width: area.width, height: area.height - 8 } }
+      : stored;
 
   return (
     <Rnd
-      ref={rndRef}
-      default={{
-        x: defaultPosition.x,
-        y: defaultPosition.y + 28,
-        width: defaultSize.width,
-        height: defaultSize.height,
-      }}
-      position={maxPos}
-      size={maxSize}
-      disableDragging={isMaximized}
-      enableResizing={!isMaximized}
-      minWidth={380}
-      minHeight={300}
+      data-window-id={id}
+      position={frame.position}
+      size={frame.size}
+      disableDragging={isMaximized || isCompact}
+      enableResizing={!isMaximized && !isCompact}
+      // re-resizable writes these as inline min-width/min-height, and CSS min-* beats an
+      // explicit width/height -- so a flat 380x300 floor would silently turn the 240x200 bubble
+      // into a 380x300 one, ~120px of it clipped off the right edge of the desktop.
+      minWidth={isCompact ? COMPACT_WIDTH : MIN_W}
+      minHeight={isCompact ? COMPACT_HEIGHT : MIN_H}
       dragHandleClassName="window-drag-handle"
-      style={{ zIndex, position: 'absolute' }}
+      // Compact windows deliberately ignore the shared focus-order zIndex pool —
+      // the whole point is staying visible/reachable no matter what else gets
+      // focused on top of it (e.g. Canvas/Scheduler opening mid-call).
+      style={{ zIndex: isCompact ? 9999 : zIndex, position: 'absolute' }}
       onMouseDown={() => onFocus(id)}
       bounds="parent"
       resizeHandleStyles={{
@@ -81,11 +115,25 @@ export default function Window({
         bottomLeft: { pointerEvents: 'none' as const },
         bottomRight: { pointerEvents: 'none' as const },
       }}
+      // Write the result back on drag STOP only, never on drag: react-draggable renders from its
+      // own state while dragging, so drag stays as smooth as before with no manager traffic per
+      // mousemove. d.x/d.y are already in the parent's coordinates. Must return nothing --
+      // react-rnd forwards the return value to react-draggable as `shouldContinue`.
+      onDragStop={(_e, d) => {
+        if (isMaximized || isCompact) return;
+        onGeometryChange(id, { position: { x: d.x, y: d.y } });
+      }}
       onResizeStart={(_e, _dir, ref) => {
         (ref as HTMLElement).style.pointerEvents = 'auto';
       }}
-      onResizeStop={(_e, _dir, ref) => {
+      // Dormant today (every resize handle is pointer-events:none, see resizeHandleStyles), but
+      // wired so it is correct if resizing comes back: react-rnd hands over the final position
+      // as the 5th argument, and without writing it back a top/left resize would snap to the
+      // old x/y.
+      onResizeStop={(_e, _dir, ref, _delta, pos) => {
         (ref as HTMLElement).style.pointerEvents = '';
+        if (isMaximized || isCompact) return;
+        onGeometryChange(id, { position: pos, size: { width: ref.offsetWidth, height: ref.offsetHeight } });
       }}
     >
       <motion.div
@@ -94,9 +142,11 @@ export default function Window({
           borderRadius: '12px',
           overflow: 'hidden',
           border: '1px solid rgba(255,255,255,0.1)',
-          boxShadow: isFocused
-            ? '0 44px 100px rgba(0,0,0,0.8), 0 0 0 0.5px rgba(255,255,255,0.07) inset'
-            : '0 20px 50px rgba(0,0,0,0.45)',
+          boxShadow: isCompact
+            ? '0 12px 40px rgba(0,0,0,0.65), 0 0 0 0.5px rgba(255,255,255,0.1) inset'
+            : isFocused
+              ? '0 44px 100px rgba(0,0,0,0.8), 0 0 0 0.5px rgba(255,255,255,0.07) inset'
+              : '0 20px 50px rgba(0,0,0,0.45)',
           background: 'transparent',
         }}
         initial={{ scale: 0.95, opacity: 0, y: 8 }}
@@ -104,10 +154,15 @@ export default function Window({
         exit={{ scale: 0.95, opacity: 0, y: 8 }}
         transition={{ duration: 0.18, ease: [0.34, 1.56, 0.64, 1] }}
       >
-        {/* ── Title bar ── */}
+        {/* ── Title bar — hidden (not removed) in compact mode via `display: none`: the bubble
+            look has no title bar/traffic lights, but keeping the element mounted with the same
+            DOM shape means toggling isCompact never changes the ancestor chain leading to
+            `children`, so the wrapped app (VideoCallApp) is never unmounted/remounted by this
+            transition. ── */}
         <div
           className="window-drag-handle flex items-center shrink-0 relative select-none"
           style={{
+            display: isCompact ? 'none' : 'flex',
             height: '28px',
             background: isFocused
               ? 'rgba(48, 48, 52, 0.98)'
@@ -185,6 +240,12 @@ export default function Window({
     </Rnd>
   );
 }
+
+// Memoized: a focus change re-renders the two windows whose isFocused/zIndex changed, not all of
+// them. Every prop is a stable reference for an untouched window (the manager only replaces the
+// window objects it changed, callbacks are useCallbacks, `children` are module-level elements,
+// and `area` is state in Desktop).
+export default memo(Window);
 
 /* ─────────────────────────────────────────────────────────────
    TrafficLight — authentic macOS Sequoia button

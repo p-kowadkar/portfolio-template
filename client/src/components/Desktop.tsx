@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { AnimatePresence } from 'framer-motion';
 import type { WindowManager } from '../hooks/useWindowManager';
+import { areaOf, getViewport } from '../lib/windowState';
 import MenuBar from './MenuBar';
 import Dock from './Dock';
 import Window from './Window';
@@ -38,8 +39,35 @@ const appComponents: Record<string, React.ReactNode> = {
 };
 
 export default function Desktop({ windowManager }: DesktopProps) {
-  const { windows, openWindow, closeWindow, minimizeWindow, maximizeWindow, focusWindow } = windowManager;
+  const {
+    windows, openWindow, closeWindow, minimizeWindow, maximizeWindow, focusWindow,
+    setWindowGeometry, clampWindowsToViewport,
+  } = windowManager;
   const [desktopClicked, setDesktopClicked] = useState(false);
+
+  // The area windows live in (the viewport minus the menu bar and the Dock zone). Maximize and the
+  // compact bubble are sized from it, and it is state (not read from `window` at render time) so a
+  // browser resize re-renders them. It lives here rather than in useWindowManager because the
+  // manager is also instantiated on mobile, where it is unused.
+  const [area, setArea] = useState(() => areaOf(getViewport()));
+  useEffect(() => {
+    let raf = 0;
+    const onResize = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const next = areaOf(getViewport());
+        setArea((prev) => (prev.width === next.width && prev.height === next.height ? prev : next));
+        // Pull every remembered frame back inside the new area, so shrinking the browser never
+        // strands a window off-screen.
+        clampWindowsToViewport();
+      });
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(raf);
+    };
+  }, [clampWindowsToViewport]);
 
   // Dev-only handle for poking window state from the console (`__wm.windows`, `__wm.openWindow('x')`),
   // which is what lets window behaviour be checked without driving a live call. Vite replaces
@@ -112,6 +140,8 @@ export default function Desktop({ windowManager }: DesktopProps) {
                 onMinimize={minimizeWindow}
                 onMaximize={maximizeWindow}
                 onFocus={focusWindow}
+                onGeometryChange={setWindowGeometry}
+                area={area}
                 // Window has always styled unfocused chrome (gray traffic lights, lighter
                 // shadow) but was never told which window is focused, so every window
                 // looked focused.

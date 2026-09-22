@@ -14,19 +14,6 @@ export interface WindowState extends WindowLike {
   //
   // params (in WindowLike), e.g. { project: 'careerforge' } for the canvas window, is set by
   // openWindow's second argument and read by whatever component the window id renders.
-  /** TRANSITIONAL: still what Window.tsx seeds react-rnd from. Removed when Window.tsx starts
-   *  rendering from the manager-owned frame (position/size). */
-  defaultPosition: { x: number; y: number };
-}
-
-// TRANSITIONAL helper for defaultPosition above: center a window on screen, below the hero text.
-function centered(w: number, h: number, offsetX = 0, offsetY = 0) {
-  const sw = typeof window !== 'undefined' ? window.innerWidth : 1440;
-  const sh = typeof window !== 'undefined' ? window.innerHeight : 900;
-  return {
-    x: Math.max(60, Math.round((sw - w) / 2) + offsetX),
-    y: Math.max(60, Math.round((sh - h) / 2 - 20) + offsetY),
-  };
 }
 
 const initialWindows: WindowState[] = [
@@ -41,7 +28,6 @@ const initialWindows: WindowState[] = [
     position: null,
     size: null,
     defaultOffset: { x: 0, y: 0 },
-    defaultPosition: centered(960, 600),
     defaultSize: { width: 960, height: 600 },
   },
   {
@@ -55,7 +41,6 @@ const initialWindows: WindowState[] = [
     position: null,
     size: null,
     defaultOffset: { x: 40, y: 0 },
-    defaultPosition: centered(420, 580, 40),
     defaultSize: { width: 420, height: 580 },
   },
   {
@@ -69,7 +54,6 @@ const initialWindows: WindowState[] = [
     position: null,
     size: null,
     defaultOffset: { x: -20, y: 0 },
-    defaultPosition: centered(560, 460, -20),
     defaultSize: { width: 560, height: 460 },
   },
   {
@@ -83,7 +67,6 @@ const initialWindows: WindowState[] = [
     position: null,
     size: null,
     defaultOffset: { x: 60, y: 0 },
-    defaultPosition: centered(460, 520, 60),
     defaultSize: { width: 460, height: 520 },
   },
   {
@@ -97,7 +80,6 @@ const initialWindows: WindowState[] = [
     position: null,
     size: null,
     defaultOffset: { x: 0, y: 0 },
-    defaultPosition: centered(1060, 640),
     defaultSize: { width: 1060, height: 640 },
   },
   {
@@ -111,7 +93,6 @@ const initialWindows: WindowState[] = [
     position: null,
     size: null,
     defaultOffset: { x: 30, y: 0 },
-    defaultPosition: centered(720, 560, 30),
     defaultSize: { width: 720, height: 560 },
   },
   {
@@ -125,7 +106,6 @@ const initialWindows: WindowState[] = [
     position: null,
     size: null,
     defaultOffset: { x: 0, y: 0 },
-    defaultPosition: centered(900, 620),
     defaultSize: { width: 900, height: 620 },
   },
   {
@@ -139,7 +119,6 @@ const initialWindows: WindowState[] = [
     position: null,
     size: null,
     defaultOffset: { x: 0, y: 0 },
-    defaultPosition: centered(640, 420),
     defaultSize: { width: 640, height: 420 },
   },
   {
@@ -153,7 +132,6 @@ const initialWindows: WindowState[] = [
     position: null,
     size: null,
     defaultOffset: { x: 10, y: 0 },
-    defaultPosition: centered(760, 560, 10),
     defaultSize: { width: 760, height: 560 },
   },
   {
@@ -167,7 +145,6 @@ const initialWindows: WindowState[] = [
     position: null,
     size: null,
     defaultOffset: { x: 0, y: 0 },
-    defaultPosition: centered(900, 700),
     defaultSize: { width: 900, height: 700 },
   },
 ];
