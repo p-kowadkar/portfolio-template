@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHaikus, FALLBACK_HAIKUS } from '@/hooks/useHaikus';
+import { readSession, writeSession, clearSession } from '@/lib/sessionStore';
 
 interface OutputLine {
   id: number;
@@ -94,6 +95,15 @@ const WHOAMI_TEXT = [
 
 let lineCounter = 100;
 
+// Quitting Terminal (closing the window) resets scrollback to a fresh banner, but command
+// history survives even that -- tab-scoped, see sessionStore.ts -- like ~/.zsh_history does
+// when you quit a real terminal. Scrollback itself is deliberately NOT persisted: a saved
+// line id would collide with the module-level lineCounter above after a reload.
+const HISTORY_KEY = 'pk_term_history_v1';
+const MAX_HISTORY = 50;
+const MAX_HISTORY_ENTRY_CHARS = 500;
+const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
 export default function TerminalApp() {
   const { haikus } = useHaikus();
   const activeHaikus = haikus.length > 0 ? haikus : FALLBACK_HAIKUS;
@@ -102,7 +112,9 @@ export default function TerminalApp() {
     { id: 0, type: 'banner', content: BANNER },
   ]);
   const [input, setInput] = useState('');
-  const [history, setHistory] = useState<string[]>([]);
+  const [history, setHistory] = useState<string[]>(
+    () => readSession(HISTORY_KEY, isStringArray)?.filter((c) => c.length <= MAX_HISTORY_ENTRY_CHARS).slice(0, MAX_HISTORY) ?? [],
+  );
   const [historyIdx, setHistoryIdx] = useState(-1);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -110,6 +122,11 @@ export default function TerminalApp() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [lines]);
+
+  useEffect(() => {
+    if (history.length) writeSession(HISTORY_KEY, history);
+    else clearSession(HISTORY_KEY);
+  }, [history]);
 
   const addLines = useCallback((newLines: OutputLine[]) => {
     setLines((prev) => [...prev, ...newLines]);
