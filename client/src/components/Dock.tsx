@@ -7,8 +7,12 @@
  *  - 60px icon size (at rest), magnifies to ~80px on hover
  *  - 10px gap between icons, 16px horizontal padding
  *  - 10px vertical padding (top + bottom inside the pill)
- *  - Separator between app windows and external links
- *  - Active indicator: 4px white dot below icon
+ *  - A thin separator before the transient icons (Canvas, Scheduler), which exist only while open,
+ *    and another before the external links
+ *  - Running indicator: 4px dot below the icon. White while running, dim while minimized, green while
+ *    a call is live in its corner bubble
+ *  - Keyboard: every icon is a real button (role, name, Enter/Space) inside a toolbar, and the Dock
+ *    slides in on keyboard focus and stays while focus is inside it
  *  - Tooltip: rounded pill above icon, SF Pro font
  *  - Dock background: rgba(255,255,255,0.12) with heavy blur — macOS light-on-dark vibrancy
  *  - Subtle 0.5px white border on top edge only (macOS shelf highlight)
@@ -24,6 +28,8 @@ import {
   type MotionValue,
 } from 'framer-motion';
 import type { WindowManager } from '../hooks/useWindowManager';
+import { dockStateOf, type DockState } from '../lib/dockState';
+import { APP_LABELS } from '../data/appLabels';
 
 interface DockApp {
   id: string;
@@ -284,19 +290,41 @@ const ICON_SIZE = 60;
 const MAGNIFIED_SIZE = 80;
 const MAGNIFY_RADIUS = 100;
 
+const DOT_STYLE: Record<Exclude<DockState, 'closed'>, { background: string; boxShadow: string }> = {
+  running: { background: 'rgba(255,255,255,0.85)', boxShadow: '0 0 6px rgba(255,255,255,0.6)' },
+  minimized: { background: 'rgba(255,255,255,0.4)', boxShadow: 'none' },
+  live: { background: '#34c759', boxShadow: '0 0 6px rgba(52,199,89,0.7)' },
+};
+
+const STATE_SUFFIX: Record<DockState, string> = {
+  closed: '',
+  running: ', running',
+  minimized: ', minimized',
+  live: ', call in progress',
+};
+
 function DockItem({
   app,
-  isOpen,
+  state,
   mouseX,
 }: {
   app: DockApp;
-  isOpen: boolean;
+  state: DockState;
   mouseX: MotionValue<number>;
   index: number;
   total: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
+
+  // One path for the click and the keyboard, so they cannot drift apart.
+  const activate = () => {
+    if (app.external) {
+      window.open(app.external, '_blank');
+    } else {
+      app.action?.();
+    }
+  };
 
   const distance = useTransform(mouseX, (val: number) => {
     const el = ref.current;
@@ -343,6 +371,13 @@ function DockItem({
       {/* Icon */}
       <motion.div
         ref={ref}
+        className="dock-icon"
+        // A div with a click handler is not a control to the keyboard or a screen reader. (framer adds
+        // tabindex=0 for whileTap on its own, but Enter then only plays the press animation, never the
+        // click, so the key handling below is what makes it operable.)
+        role="button"
+        tabIndex={0}
+        aria-label={`${app.label}${STATE_SUFFIX[state]}`}
         style={{
           width: ICON_SIZE,
           height: ICON_SIZE,
@@ -354,21 +389,35 @@ function DockItem({
         whileTap={{ scale: 0.88 }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        onClick={app.external ? () => window.open(app.external, '_blank') : app.action}
+        onFocus={() => setHovered(true)}
+        onBlur={() => setHovered(false)}
+        // A mouse press must not FOCUS the icon (it has tabindex, so it otherwise would): the pill treats
+        // focus inside it as "someone is keyboard-navigating", which holds the Dock open, so after one
+        // click the Dock would never auto-hide again, and Space/Enter elsewhere would re-activate the
+        // icon. preventDefault on mousedown stops the focus; the click still fires, and Tab focus (the
+        // keyboard path) is untouched. It is also what the macOS Dock does: it never takes focus.
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={activate}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault(); // Space would otherwise scroll the page
+          if (e.repeat) return; // a held key must not re-trigger
+          activate();
+        }}
       >
         {app.icon}
       </motion.div>
 
       {/* Active indicator dot */}
       <div
+        aria-hidden
         style={{
-          width: isOpen ? 4 : 0,
+          width: state === 'closed' ? 0 : 4,
           height: 4,
           borderRadius: '50%',
-          background: 'rgba(255,255,255,0.85)',
+          ...(state === 'closed' ? { background: DOT_STYLE.running.background, boxShadow: 'none' } : DOT_STYLE[state]),
           marginTop: 4,
           transition: 'all 0.25s ease',
-          boxShadow: isOpen ? '0 0 6px rgba(255,255,255,0.6)' : 'none',
           flexShrink: 0,
         }}
       />
@@ -497,10 +546,127 @@ function TerminalIcon() {
   );
 }
 /* ─────────────────────────────────────────────────────────────
-   Dock separator — thin vertical divider, macOS style
+   Canvas icon -- a tiny architecture diagram (a master node feeding two agents), the same
+   thing Canvas shows. Ids are prefixed (cnv-) because SVG ids are document-global.
+   ───────────────────────────────────────────────────────────── */
+function CanvasIcon() {
+  return (
+    <svg viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
+      <defs>
+        <linearGradient id="cnv-bg" x1="5" y1="5" x2="55" y2="55" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#3b4054" />
+          <stop offset="1" stopColor="#14161d" />
+        </linearGradient>
+        <filter id="cnv-drop" x="-15%" y="-10%" width="130%" height="140%">
+          <feDropShadow dx="0" dy="3" stdDeviation="3" floodColor="#000" floodOpacity="0.45" />
+        </filter>
+      </defs>
+      <g filter="url(#cnv-drop)">
+        <rect x="5" y="5" width="50" height="50" rx="12" fill="url(#cnv-bg)" />
+        <rect x="5" y="5" width="50" height="25" rx="12" fill="rgba(255,255,255,0.08)" />
+        <rect x="6" y="6" width="48" height="48" rx="11" stroke="rgba(255,255,255,0.1)" strokeWidth="0.75" fill="none" />
+        {/* Edges */}
+        <path d="M30 24 Q30 30 20 36" stroke="rgba(255,255,255,0.45)" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+        <path d="M30 24 Q30 30 40 36" stroke="rgba(255,255,255,0.45)" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+        <path d="M27 42 L33 42" stroke="rgba(255,255,255,0.3)" strokeWidth="1.1" strokeDasharray="2 2" strokeLinecap="round" />
+        {/* Master node */}
+        <rect x="21" y="14" width="18" height="10" rx="3" fill="var(--pk-accent)" />
+        <rect x="21" y="14" width="18" height="5" rx="3" fill="rgba(255,255,255,0.22)" />
+        {/* Agent nodes */}
+        <rect x="11" y="36" width="16" height="9" rx="3" fill="rgba(255,255,255,0.85)" />
+        <rect x="33" y="36" width="16" height="9" rx="3" fill="rgba(255,255,255,0.85)" />
+      </g>
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Schedule-a-call icon -- a calendar page: red header band, a grid of days with one picked.
+   ───────────────────────────────────────────────────────────── */
+function SchedulerIcon() {
+  return (
+    <svg viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
+      <defs>
+        <linearGradient id="sch-bg" x1="5" y1="5" x2="55" y2="55" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#ffffff" />
+          <stop offset="1" stopColor="#dcdce2" />
+        </linearGradient>
+        <filter id="sch-drop" x="-15%" y="-10%" width="130%" height="140%">
+          <feDropShadow dx="0" dy="3" stdDeviation="3" floodColor="#000" floodOpacity="0.4" />
+        </filter>
+      </defs>
+      <g filter="url(#sch-drop)">
+        <rect x="5" y="5" width="50" height="50" rx="12" fill="url(#sch-bg)" />
+        {/* Header band */}
+        <path d="M5 17 V17 C5 10.4 10.4 5 17 5 H43 C49.6 5 55 10.4 55 17 V19 H5 Z" fill="#ff3b30" />
+        <rect x="5" y="5" width="50" height="7" rx="12" fill="rgba(255,255,255,0.14)" />
+        {/* Binder rings */}
+        <circle cx="18" cy="12" r="1.8" fill="rgba(0,0,0,0.35)" />
+        <circle cx="42" cy="12" r="1.8" fill="rgba(0,0,0,0.35)" />
+        {/* Days */}
+        {[0, 1, 2, 3].map((c) => [0, 1].map((r) => (
+          <rect
+            key={`${c}-${r}`}
+            x={12 + c * 9.5}
+            y={26 + r * 11}
+            width="7"
+            height="7"
+            rx="2"
+            fill={c === 2 && r === 1 ? 'var(--pk-accent)' : 'rgba(0,0,0,0.16)'}
+          />
+        )))}
+      </g>
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Transient icons -- Canvas and the Scheduler have no permanent Dock slot: they appear to the right
+   of a thin separator while their window is open (minimized included, which is what makes a
+   minimized Canvas findable again at all) and leave when it closes.
    ───────────────────────────────────────────────────────────── */
 
+// The pill lays its children out with a 10px flex gap. A slot that grows from width 0 would pop 10px of
+// gap in immediately, so it starts with a -10px margin that cancels it and eases to 0 as the width grows.
+// No overflow:hidden on these wrappers: the tooltip and a magnified icon overflow them on purpose.
+const SLOT_HIDDEN = { width: 0, opacity: 0, scale: 0.5, marginLeft: -10 };
+const SLOT_SHOWN = { width: ICON_SIZE, opacity: 1, scale: 1, marginLeft: 0 };
+const SLOT_TRANSITION = { duration: 0.3, ease: [0.4, 0, 0.2, 1] as const };
+
+function TransientSlot({ children }: { children: React.ReactNode }) {
+  return (
+    <motion.div
+      initial={SLOT_HIDDEN}
+      animate={SLOT_SHOWN}
+      exit={SLOT_HIDDEN}
+      transition={SLOT_TRANSITION}
+      style={{ flexShrink: 0 }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 function DockSeparator() {
+  return (
+    <motion.div
+      role="separator"
+      aria-orientation="vertical"
+      initial={{ width: 0, opacity: 0, marginLeft: -10 }}
+      animate={{ width: 1, opacity: 1, marginLeft: 0 }}
+      exit={{ width: 0, opacity: 0, marginLeft: -10 }}
+      transition={SLOT_TRANSITION}
+      // Centred on the icon row: the column is the 60px icon plus the 8px dot row below it.
+      style={{ height: 46, alignSelf: 'flex-start', marginTop: 7, background: 'rgba(255,255,255,0.28)', flexShrink: 0 }}
+    />
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Separator before the external links -- static, always shown between the pinned/transient
+   window icons and the external ones.
+   ───────────────────────────────────────────────────────────── */
+function ExternalSeparator() {
   return (
     <div
       style={{
@@ -521,22 +687,41 @@ function DockSeparator() {
    ───────────────────────────────────────────────────────────── */
 
 export default function Dock({ windowManager }: DockProps) {
-  const { windows, openWindow } = windowManager;
+  const { windows, activateWindow } = windowManager;
   const mouseX = useMotionValue(Infinity);
   const [dockVisible, setDockVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pillRef = useRef<HTMLDivElement>(null);
+  // True while keyboard focus is inside the Dock: it must not slide away under someone who is tabbing
+  // through it (they would be operating invisible controls).
+  const focusWithin = useRef(false);
+
+  const scheduleHide = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => { if (!focusWithin.current) setDockVisible(false); }, 3000);
+  }, []);
 
   const showDock = useCallback(() => {
     setDockVisible(true);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setDockVisible(false), 3000);
-  }, []);
+    scheduleHide();
+  }, [scheduleHide]);
 
   // Auto-hide after 3s on mount
   useEffect(() => {
-    hideTimer.current = setTimeout(() => setDockVisible(false), 3000);
+    scheduleHide();
     return () => { if (hideTimer.current) clearTimeout(hideTimer.current); };
-  }, []);
+  }, [scheduleHide]);
+
+  // A window that has just been minimized flies into its icon, so the Dock has to be there to receive
+  // it (a hidden Dock lands the window on an empty patch of desktop).
+  const minimizedKey = windows.filter((w) => w.isOpen && w.isMinimized).map((w) => w.id).join(',');
+  const seenMinimized = useRef(minimizedKey);
+  useEffect(() => {
+    const before = seenMinimized.current ? seenMinimized.current.split(',') : [];
+    const now = minimizedKey ? minimizedKey.split(',') : [];
+    if (now.some((id) => !before.includes(id))) showDock();
+    seenMinimized.current = minimizedKey;
+  }, [minimizedKey, showDock]);
 
   // Show when mouse is within 80px of bottom
   useEffect(() => {
@@ -548,15 +733,21 @@ export default function Dock({ windowManager }: DockProps) {
   }, [showDock]);
 
   const windowApps: DockApp[] = [
-    { id: 'projects', label: 'Projects', icon: <FolderIcon />, action: () => openWindow('projects') },
-    { id: 'chat', label: 'AIssistant', icon: <ChatIcon />, action: () => openWindow('chat') },
-    { id: 'mystory', label: 'My Story', icon: <MyStoryIcon />, action: () => openWindow('mystory') },
-    { id: 'videocall', label: 'Video Call', icon: <VideoIcon />, action: () => openWindow('videocall') },
-    { id: 'messages', label: 'Messages', icon: <MailIcon />, action: () => openWindow('messages') },
-    { id: 'browser', label: 'Browser', icon: <BrowserIcon />, action: () => openWindow('browser') },
-    { id: 'cv', label: 'Resume', icon: <CVIcon />, action: () => openWindow('cv') },
-    { id: 'terminal', label: 'Terminal', icon: <TerminalIcon />, action: () => openWindow('terminal') },
+    { id: 'projects', label: APP_LABELS.projects, icon: <FolderIcon />, action: () => activateWindow('projects') },
+    { id: 'chat', label: APP_LABELS.chat, icon: <ChatIcon />, action: () => activateWindow('chat') },
+    { id: 'mystory', label: APP_LABELS.mystory, icon: <MyStoryIcon />, action: () => activateWindow('mystory') },
+    { id: 'videocall', label: APP_LABELS.videocall, icon: <VideoIcon />, action: () => activateWindow('videocall') },
+    { id: 'messages', label: APP_LABELS.messages, icon: <MailIcon />, action: () => activateWindow('messages') },
+    { id: 'browser', label: APP_LABELS.browser, icon: <BrowserIcon />, action: () => activateWindow('browser') },
+    { id: 'cv', label: APP_LABELS.cv, icon: <CVIcon />, action: () => activateWindow('cv') },
+    { id: 'terminal', label: APP_LABELS.terminal, icon: <TerminalIcon />, action: () => activateWindow('terminal') },
   ];
+
+  // Not pinned: present only while the window is open, in a fixed order.
+  const transientApps: DockApp[] = [
+    { id: 'canvas', label: APP_LABELS.canvas, icon: <CanvasIcon />, action: () => activateWindow('canvas') },
+    { id: 'scheduler', label: APP_LABELS.scheduler, icon: <SchedulerIcon />, action: () => activateWindow('scheduler') },
+  ].filter((app) => windows.find((w) => w.id === app.id)?.isOpen);
 
   const externalApps: DockApp[] = [
     { id: 'telegram', label: 'Telegram', icon: <TelegramIcon />, external: 'https://t.me/pk_kowadkar' },
@@ -595,34 +786,67 @@ export default function Dock({ windowManager }: DockProps) {
           `,
           pointerEvents: 'auto',
         }}
+        ref={pillRef}
+        role="toolbar"
+        aria-label="Dock"
+        aria-orientation="horizontal"
         onMouseMove={(e) => mouseX.set(e.clientX)}
         onMouseLeave={() => mouseX.set(Infinity)}
+        onFocus={() => { focusWithin.current = true; showDock(); }}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+            focusWithin.current = false;
+            scheduleHide();
+          }
+        }}
+        onKeyDown={(e) => {
+          // Left/Right move along the icons, as in any toolbar (Tab still visits each one).
+          if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+          const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="button"]'));
+          const at = items.indexOf(document.activeElement as HTMLElement);
+          if (at === -1) return;
+          e.preventDefault();
+          items[(at + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length].focus();
+        }}
         initial={{ y: 100, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.3, duration: 0.55, ease: [0.34, 1.56, 0.64, 1] }}
       >
         {windowApps.map((app, i) => {
           const win = windows.find((w) => w.id === app.id);
-          const isOpen = win ? win.isOpen && !win.isMinimized : false;
           return (
             <DockItem
               key={app.id}
               app={app}
-              isOpen={isOpen}
+              state={dockStateOf(win)}
               mouseX={mouseX}
               index={i}
-              total={windowApps.length + externalApps.length}
+              total={windowApps.length}
             />
           );
         })}
+        <AnimatePresence initial={false}>
+          {transientApps.length > 0 && <DockSeparator key="separator" />}
+          {transientApps.map((app) => (
+            <TransientSlot key={app.id}>
+              <DockItem
+                app={app}
+                state={dockStateOf(windows.find((w) => w.id === app.id))}
+                mouseX={mouseX}
+                index={0}
+                total={1}
+              />
+            </TransientSlot>
+          ))}
+        </AnimatePresence>
 
-        <DockSeparator />
+        <ExternalSeparator />
 
         {externalApps.map((app, i) => (
           <DockItem
             key={app.id}
             app={app}
-            isOpen={false}
+            state="closed"
             mouseX={mouseX}
             index={windowApps.length + i}
             total={windowApps.length + externalApps.length}
