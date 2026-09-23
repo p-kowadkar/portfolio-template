@@ -2,7 +2,7 @@
 // themselves in, edges draw in after. Shared by ProjectsApp's Showcase panel
 // and the Canvas app (desktop + mobile) so the rendering logic lives in one
 // place instead of being duplicated.
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useId } from 'react';
 import { motion } from 'framer-motion';
 import type { ArchNode, ArchEdge } from '../data/projects';
 
@@ -61,6 +61,13 @@ export default function ArchDiagram({ nodes, edges }: { nodes: ArchNode[]; edges
   // 0.03em letter-spacing; err wide, not narrow.
   const boxWidth = (label: string) => Math.max(60, label.length * 5.8 + 16);
 
+  // Filter and marker ids are document-global, and every diagram instance used to define the same
+  // fixed ones. A url(#aw) resolves to the FIRST element with that id, and a marker's content
+  // inherits its style from the marker's OWN ancestors. So once a minimized window stays mounted
+  // (visibility:hidden, see Window.tsx's Sprint 6 flip), a visible diagram elsewhere could resolve
+  // its arrowheads to a hidden copy and lose them. Each instance gets its own.
+  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
+
   return (
     <div style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden', background: 'rgba(255,255,255,0.025)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.07)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06)' }}>
       <div style={{ position: 'absolute', top: '8px', left: '12px', fontSize: '8px', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'color-mix(in srgb, var(--pk-accent) 55%, transparent)', fontFamily: "'DM Mono', monospace", zIndex: 2 }}>
@@ -68,17 +75,17 @@ export default function ArchDiagram({ nodes, edges }: { nodes: ArchNode[]; edges
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }} preserveAspectRatio="xMidYMid meet">
         <defs>
-          <filter id="eg" x="-20%" y="-20%" width="140%" height="140%">
+          <filter id={`${uid}-eg`} x="-20%" y="-20%" width="140%" height="140%">
             <feGaussianBlur stdDeviation="1.5" result="blur" />
             <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
-          <filter id="ng" x="-30%" y="-30%" width="160%" height="160%">
+          <filter id={`${uid}-ng`} x="-30%" y="-30%" width="160%" height="160%">
             <feGaussianBlur stdDeviation="2" result="blur" />
             <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
-          <marker id="aw" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="rgba(255,255,255,0.2)" /></marker>
-          <marker id="ar" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="color-mix(in srgb, var(--pk-accent) 50%, transparent)" /></marker>
-          <marker id="ab" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="rgba(10,132,255,0.5)" /></marker>
+          <marker id={`${uid}-aw`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="rgba(255,255,255,0.2)" /></marker>
+          <marker id={`${uid}-ar`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="color-mix(in srgb, var(--pk-accent) 50%, transparent)" /></marker>
+          <marker id={`${uid}-ab`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="rgba(10,132,255,0.5)" /></marker>
         </defs>
         {edges.map((edge, i) => {
           const from = getNode(edge.from), to = getNode(edge.to);
@@ -93,7 +100,7 @@ export default function ArchDiagram({ nodes, edges }: { nodes: ArchNode[]; edges
             <motion.path key={i} d={`M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`}
               stroke={stroke} strokeWidth={edge.style === 'dashed' ? 1 : 1.2}
               strokeDasharray={edge.style === 'dashed' ? '4 3' : undefined}
-              fill="none" markerEnd={`url(#${marker})`} filter="url(#eg)"
+              fill="none" markerEnd={`url(#${uid}-${marker})`} filter={`url(#${uid}-eg)`}
               initial={{ pathLength: 0, opacity: 0 }} animate={{ pathLength: 1, opacity: 1 }}
               transition={{ duration: 0.5, ease: 'easeOut' }} />
           );
@@ -113,7 +120,7 @@ export default function ArchDiagram({ nodes, edges }: { nodes: ArchNode[]; edges
           const cy = py(node.y);
           return (
             <motion.g key={node.id} initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: 'spring', stiffness: 400, damping: 20 }}>
-              <rect x={cx - w / 2} y={cy - 12} width={w} height={24} rx={6} fill={c.fill} stroke={c.stroke} strokeWidth={node.type === 'master' ? 1.5 : 0.8} filter={node.type === 'master' ? 'url(#ng)' : undefined} />
+              <rect x={cx - w / 2} y={cy - 12} width={w} height={24} rx={6} fill={c.fill} stroke={c.stroke} strokeWidth={node.type === 'master' ? 1.5 : 0.8} filter={node.type === 'master' ? `url(#${uid}-ng)` : undefined} />
               <text x={cx} y={cy + 4} textAnchor="middle" fill={c.text} fontSize={8.5} fontFamily="'DM Mono', monospace" letterSpacing="0.03em">
                 {label}{isTyping && <tspan fill={c.stroke} opacity={0.8}>▊</tspan>}
               </text>

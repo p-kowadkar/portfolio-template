@@ -9,14 +9,22 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, SquarePen } from 'lucide-react';
-import { dispatchToolCall } from '../../lib/toolDispatch';
+import { dispatchToolCall, type ToolCall } from '../../lib/toolDispatch';
 import { useOpenWindow } from '../../contexts/WindowActionsContext';
-import { useIsWindowOpen } from '../../contexts/WindowParamsContext';
+import { useIsWindowOpen, useWindowSelf } from '../../contexts/WindowParamsContext';
 import { useAIssistantConversation, type AIssistantMessage } from '../../hooks/useAIssistantConversation';
 
 type Message = AIssistantMessage;
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
+// A request that never answers used to be cut short by accident: minimizing unmounted this window,
+// which aborted it. The window now stays mounted (Sprint 6), so a stalled request (a cold backend
+// that never wakes) would keep the input disabled through minimize and restore. Give up after this
+// long, generous enough for a cold start.
+// (A plain timer that aborts the request's own controller, not AbortSignal.any: that needs Chrome
+// 116 / Firefox 124 / Safari 17.4, and on anything older it THROWS before fetch runs, which would
+// turn every message into the "backend is offline" reply.)
+const CHAT_REQUEST_TIMEOUT_MS = 60_000;
 
 // Not part of the persisted conversation (see useAIssistantConversation.ts): always
 // re-seeded as messages[0].
@@ -34,9 +42,17 @@ export default function ChatPKApp() {
   const setTurns = chat.setTurns;
   const messages = useMemo<Message[]>(() => [GREETING, ...chat.turns], [chat.turns]);
   const [input, setInput] = useState(chat.restoredInput);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const openWindow = useOpenWindow();
+  const { isMinimized } = useWindowSelf();
+  const minimizedRef = useRef(isMinimized);
+  minimizedRef.current = isMinimized;
+  // A tool call that arrives while this window is minimized waits here until the visitor restores
+  // it. The reply text lands either way, but the ACTION (a new tab, Canvas popping open) belongs to
+  // the moment they are looking at the answer that explains it; minimizing used to abort the
+  // request, so this never happened.
+  const heldToolCallRef = useRef<ToolCall | null>(null);
 
   // The in-flight /api/chat request. ChatPKApp had no way to cancel it, so closing the
   // window mid-reply still ran dispatchToolCall when the answer arrived, and could pop
@@ -55,13 +71,35 @@ export default function ChatPKApp() {
   const startNewConversation = () => {
     abortRef.current?.abort();
     abortRef.current = null;
+    heldToolCallRef.current = null;
     chat.reset();
     setLoading(false);
     setInput('');
   };
 
+  const runToolCall = (toolCall: ToolCall) => {
+    dispatchToolCall(toolCall, {
+      openCanvas: (project) => openWindow('canvas', { project }),
+      openScheduler: () => openWindow('scheduler'),
+      openApp: (appId) => openWindow(appId),
+    });
+  };
+  // Restored: now the visitor can see the reply, so run the action that came with it.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isMinimized) return;
+    const held = heldToolCallRef.current;
+    if (!held) return;
+    heldToolCallRef.current = null;
+    runToolCall(held);
+  }, [isMinimized]);
+
+  // Scroll the message list itself, never an anchor element: scrollIntoView scrolls EVERY scrollable
+  // ancestor, and a reply landing while this window is minimized would shift the whole desktop and
+  // corrupt react-rnd's offset math for every window. (A container's scrollTop also works while
+  // hidden, so a restored window is already at the bottom.)
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [messages, loading]);
 
   const SUGGESTED_CHIPS = [
@@ -77,6 +115,10 @@ export default function ChatPKApp() {
     const userMsg: Message = { role: 'user', content: text };
     const controller = new AbortController();
     abortRef.current = controller;
+    // Set when the timer below is what aborted the request: that IS an outage, unlike the deliberate
+    // aborts (window closed, new conversation), so the catch and finally must tell them apart.
+    let timedOut = false;
+    const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, CHAT_REQUEST_TIMEOUT_MS);
     setTurns((prev) => [...prev, userMsg]);
     setInput('');
     setLoading(true);
@@ -85,6 +127,7 @@ export default function ChatPKApp() {
 
     try {
       let reply = '';
+      let toolCall: ToolCall | undefined;
 
       if (API_URL) {
         // ── Primary: backend /api/chat with live RAG ──────────────────────────
@@ -100,31 +143,31 @@ export default function ChatPKApp() {
         if (!res.ok) throw new Error(`Backend error: ${res.status}`);
         const data = await res.json();
         reply = data.reply;
-
-        // The window was closed while this was in flight: a reply from an AIssistant
-        // that's gone must not open windows or append to a conversation that no longer
-        // exists on screen.
-        if (controller.signal.aborted || !chatOpenRef.current) return;
-
-        if (data.tool_call) {
-          dispatchToolCall(data.tool_call, {
-            openCanvas: (project) => openWindow('canvas', { project }),
-            openScheduler: () => openWindow('scheduler'),
-            openApp: (appId) => openWindow(appId),
-          });
-        }
+        toolCall = data.tool_call;
       } else {
         reply = "AIssistant isn't fully configured yet — reach out to Pranav directly at pk.kowadkar@gmail.com.";
       }
 
+      // The window was closed while this was in flight: a reply from an AIssistant
+      // that's gone must not open windows or append to a conversation that no longer
+      // exists on screen.
       if (controller.signal.aborted || !chatOpenRef.current) return;
-      if (!reply) throw new Error('Empty reply');
-      setTurns((prev) => [...prev, { role: 'model', content: reply }]);
+
+      // A tool call can come back with no accompanying text at all (the model answers
+      // purely by opening a window) — that's a valid, expected reply, not a failure.
+      // Only the true empty case (neither text nor a tool call) means something actually
+      // went wrong.
+      if (toolCall) {
+        if (minimizedRef.current) heldToolCallRef.current = toolCall;
+        else runToolCall(toolCall);
+      }
+      if (!reply && !toolCall) throw new Error('Empty reply');
+      if (reply) setTurns((prev) => [...prev, { role: 'model', content: reply }]);
     } catch (err) {
-      // Deliberate (window closed / new conversation), not an outage: no "backend is
-      // offline" bubble.
+      // Deliberate (window closed / new conversation), not an outage: no "backend is offline"
+      // bubble. A timeout aborts the same controller, so it is recognised first: it is an outage.
       if (!chatOpenRef.current) return;
-      if (controller.signal.aborted || (err as { name?: string })?.name === 'AbortError') return;
+      if (!timedOut && (controller.signal.aborted || (err as { name?: string })?.name === 'AbortError')) return;
       console.error('AIssistant error:', err);
       setTurns((prev) => [
         ...prev,
@@ -134,12 +177,12 @@ export default function ChatPKApp() {
         },
       ]);
     } finally {
-      // Only a request that finished normally, in an open window, clears `loading`. A
-      // reset already did. When the window was closed under it, `loading` is left set ON
-      // PURPOSE: it is what keeps the stored inFlight flag true, so the unanswered
-      // question is handed back to the input on the next open instead of hanging in the
-      // thread with no reply.
-      if (abortRef.current === controller && !controller.signal.aborted && chatOpenRef.current) {
+      clearTimeout(timeoutId);
+      // Only a request that finished normally (or timed out), in an open window, clears `loading`. A
+      // reset already did. When the window was closed under it, `loading` is left set ON PURPOSE: it
+      // is what keeps the stored inFlight flag true, so the unanswered question is handed back to
+      // the input on the next open instead of hanging in the thread with no reply.
+      if (abortRef.current === controller && (!controller.signal.aborted || timedOut) && chatOpenRef.current) {
         abortRef.current = null;
         setLoading(false);
       }
@@ -203,7 +246,7 @@ export default function ChatPKApp() {
       </div>
 
       {/* ── Messages ── */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-3">
+      <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-3">
         <AnimatePresence initial={false}>
           {messages.map((msg, i) => (
             <motion.div
@@ -287,14 +330,15 @@ export default function ChatPKApp() {
                 <motion.div
                   key={i}
                   style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'rgba(255,255,255,0.4)' }}
-                  animate={{ opacity: [0.3, 1, 0.3], scale: [0.8, 1.1, 0.8] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
+                  // Paused while the window is hidden: this loop runs on the JS frame loop, and a stalled
+                  // request would otherwise keep it spinning under a hidden window.
+                  animate={isMinimized ? { opacity: 0.6, scale: 1 } : { opacity: [0.3, 1, 0.3], scale: [0.8, 1.1, 0.8] }}
+                  transition={isMinimized ? { duration: 0 } : { duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
                 />
               ))}
             </div>
           </motion.div>
         )}
-        <div ref={bottomRef} />
       </div>
 
       {/* ── Suggested chips (shown only before first user message) ── */}

@@ -643,6 +643,9 @@ export default function VideoCallApp() {
                       height: `${140 + i * 40}px`,
                       border: '1.5px solid rgba(52,199,89,0.25)',
                       animation: `pulse-ring ${1.8 + i * 0.3}s ease-out infinite ${i * 0.4}s`,
+                      // The ringing screen stays mounted under a minimized window: stop the rings (and the
+                      // two pulses below) while hidden, they would otherwise run for as long as it sits there.
+                      animationPlayState: isMinimized ? 'paused' : 'running',
                     }}
                   />
                 ))}
@@ -669,8 +672,8 @@ export default function VideoCallApp() {
                 </p>
                 <motion.p
                   style={{ fontFamily: "'Outfit', sans-serif", fontSize: '14px', color: 'rgba(255,255,255,0.5)', marginTop: '4px' }}
-                  animate={{ opacity: [0.5, 1, 0.5] }}
-                  transition={{ duration: 1.8, repeat: Infinity }}
+                  animate={isMinimized ? { opacity: 1 } : { opacity: [0.5, 1, 0.5] }}
+                  transition={isMinimized ? { duration: 0 } : { duration: 1.8, repeat: Infinity }}
                 >
                   Digital Twin · AI Engineer
                 </motion.p>
@@ -702,8 +705,8 @@ export default function VideoCallApp() {
                 <motion.button
                   onClick={acceptCall}
                   aria-label="Accept call"
-                  animate={{ scale: [1, 1.06, 1] }}
-                  transition={{ duration: 1.4, repeat: Infinity }}
+                  animate={isMinimized ? { scale: 1 } : { scale: [1, 1.06, 1] }}
+                  transition={isMinimized ? { duration: 0 } : { duration: 1.4, repeat: Infinity }}
                   className="flex items-center justify-center transition-all hover:brightness-110 active:scale-95"
                   style={{
                     width: '68px', height: '68px', borderRadius: '50%',

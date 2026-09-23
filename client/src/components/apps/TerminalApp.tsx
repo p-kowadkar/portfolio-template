@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHaikus, FALLBACK_HAIKUS } from '@/hooks/useHaikus';
 import { readSession, writeSession, clearSession } from '@/lib/sessionStore';
+import { useWindowSelf } from '@/contexts/WindowParamsContext';
 
 interface OutputLine {
   id: number;
@@ -116,12 +117,24 @@ export default function TerminalApp() {
     () => readSession(HISTORY_KEY, isStringArray)?.filter((c) => c.length <= MAX_HISTORY_ENTRY_CHARS).slice(0, MAX_HISTORY) ?? [],
   );
   const [historyIdx, setHistoryIdx] = useState(-1);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const outRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { isMinimized, isFocused } = useWindowSelf();
 
+  // Scroll the output pane itself, never an anchor element: scrollIntoView scrolls EVERY scrollable
+  // ancestor (the window's overflow:hidden shell, the desktop), which shifts the whole desktop and
+  // corrupts react-rnd's offset math for every window.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = outRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [lines]);
+
+  // autoFocus only fires on mount, but the app now outlives minimize: inert drops focus to <body>, so
+  // restoring would come back with the caret dead until a click. Focus whenever the window is
+  // visible AND focused (this also covers the first mount: a freshly opened window is raised).
+  useEffect(() => {
+    if (!isMinimized && isFocused) inputRef.current?.focus({ preventScroll: true });
+  }, [isMinimized, isFocused]);
 
   useEffect(() => {
     if (history.length) writeSession(HISTORY_KEY, history);
@@ -264,7 +277,7 @@ export default function TerminalApp() {
       onClick={() => inputRef.current?.focus()}
     >
       {/* Output area */}
-      <div className="flex-1 overflow-y-auto px-4 py-4" style={{ fontSize: '12px', lineHeight: 1.7 }}>
+      <div ref={outRef} className="flex-1 overflow-y-auto px-4 py-4" style={{ fontSize: '12px', lineHeight: 1.7 }}>
         <AnimatePresence initial={false}>
           {lines.map((line) => (
             <motion.div
@@ -281,7 +294,6 @@ export default function TerminalApp() {
             </motion.div>
           ))}
         </AnimatePresence>
-        <div ref={bottomRef} />
       </div>
 
       {/* Input row */}
@@ -292,7 +304,6 @@ export default function TerminalApp() {
         <span style={{ color: 'var(--pk-accent)', fontSize: '12px', flexShrink: 0 }}>pk@portfolio ~ %</span>
         <input
           ref={inputRef}
-          autoFocus
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
