@@ -45,6 +45,12 @@ export default function Desktop({ windowManager }: DesktopProps) {
   } = windowManager;
   const [desktopClicked, setDesktopClicked] = useState(false);
 
+  // A call bubble (or any compact window) lives in the same top-right corner as the Achievements
+  // banner, and the banner is stacked above the whole desktop area, so it paints over the bubble's
+  // status chip and swallows clicks on its top strip. The banner is ambient; the bubble is a live
+  // call. It steps aside until the bubble is gone.
+  const bubbleUp = windows.some((w) => w.isOpen && w.isCompact);
+
   // The area windows live in (the viewport minus the menu bar and the Dock zone). Maximize and the
   // compact bubble are sized from it, and it is state (not read from `window` at render time) so a
   // browser resize re-renders them. It lives here rather than in useWindowManager because the
@@ -156,8 +162,8 @@ export default function Desktop({ windowManager }: DesktopProps) {
         </AnimatePresence>
       </div>
 
-      {/* Achievements widget */}
-      <AchievementsWidget />
+      {/* Achievements widget -- suppressed while a call bubble is up (bubbleUp above) */}
+      {!bubbleUp && <AchievementsWidget />}
 
       {/* Dock */}
       <Dock windowManager={windowManager} />

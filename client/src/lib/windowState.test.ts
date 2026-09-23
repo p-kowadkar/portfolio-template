@@ -283,6 +283,12 @@ describe('cancelCloseIn', () => {
     const ws = [open()];
     expect(cancelCloseIn(ws, 'a')).toBe(ws);
   });
+  it('raises the window: something opened while the sheet was up may sit above it now', () => {
+    const guard = { title: 't', body: 'b', confirmLabel: 'c' };
+    const ws = [open({ id: 'a', zIndex: 10, closeGuard: guard, closeRequested: true }), open({ id: 'b', zIndex: 20 })];
+    const [a] = cancelCloseIn(ws, 'a');
+    expect(a.zIndex).toBeGreaterThan(20);
+  });
 });
 
 describe('setPolicyIn', () => {
@@ -364,8 +370,8 @@ describe('setCompactIn', () => {
     const [back] = setCompactIn([bubble], 'a', false);
     expect(back).toMatchObject({ isCompact: false, isMaximized: true, position: { x: 100, y: 80 } });
   });
-  it('ignores compact for a closed or hidden window (a late tool call cannot leave a stuck bubble)', () => {
-    for (const ws of [[win()], [open({ isMinimized: true })]]) {
+  it('ignores compact for a closed, hidden, or close-pending window (a late tool call, or a sheet up, cannot leave a stuck bubble)', () => {
+    for (const ws of [[win()], [open({ isMinimized: true })], [open({ closeRequested: true })]]) {
       expect(setCompactIn(ws, 'a', true)).toBe(ws);
     }
   });
@@ -374,6 +380,15 @@ describe('setCompactIn', () => {
     expect(setCompactIn(ws, 'a', true)).toBe(ws);
     const plain = [open()];
     expect(setCompactIn(plain, 'a', false)).toBe(plain);
+  });
+  it('raises the window on a change in EITHER direction -- a programmatic expand needs its z raised too, not just a shrink', () => {
+    const ws = [open({ id: 'a', zIndex: 10 }), open({ id: 'b', zIndex: 20 })];
+    const [a1] = setCompactIn(ws, 'a', true);
+    expect(a1.zIndex).toBeGreaterThan(20);
+    const shrunk = [a1, ws[1]];
+    const higherOther = [shrunk[0], { ...shrunk[1], zIndex: a1.zIndex + 5 }];
+    const [a2] = setCompactIn(higherOther, 'a', false);
+    expect(a2.zIndex).toBeGreaterThan(higherOther[1].zIndex);
   });
 });
 

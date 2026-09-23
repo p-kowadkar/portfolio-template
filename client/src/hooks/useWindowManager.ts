@@ -242,11 +242,10 @@ export function useWindowManager(): WindowManager {
   // tool-call trigger, a manual restore button) each already know exactly which state they
   // want. Compact is a render-time override of the stored frame: it clears neither
   // isMaximized nor the frame, so expanding returns to exactly where the window was.
+  // setCompactIn itself raises the window on a change in either direction now (a programmatic
+  // expand -- the cap-hangup auto-opening the window -- needs its z raised too, not just a shrink).
   const setWindowCompact = useCallback((id: string, compact: boolean) => {
-    setWindows((prev) => {
-      const next = setCompactIn(prev, id, compact);
-      return compact && next !== prev ? bringToFront(next, id) : next;
-    });
+    setWindows((prev) => setCompactIn(prev, id, compact));
   }, []);
 
   const setWindowGeometry = useCallback((id: string, patch: { position?: Point; size?: Size }) => {

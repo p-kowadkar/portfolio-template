@@ -218,11 +218,13 @@ export function closeWindowIn<W extends WindowLike>(windows: W[], id: string, fo
   });
 }
 
-/** The visitor answered the confirm sheet with Cancel. */
+/** The visitor answered the confirm sheet with Cancel. The window comes to the front: something the
+ *  app opened while the sheet was up (a tool call opening Canvas) may sit above it now, and after a
+ *  Cancel the visitor expects to be looking at the call they chose to keep. */
 export function cancelCloseIn<W extends WindowLike>(windows: W[], id: string): W[] {
   const w = windows.find((x) => x.id === id);
   if (!w || !w.closeRequested) return windows;
-  return replace(windows, { ...w, closeRequested: false });
+  return bringToFront(replace(windows, { ...w, closeRequested: false }), id);
 }
 
 /** An app declares (or clears) its window's policy. No-op for a window that is not open: an app's
@@ -288,13 +290,20 @@ export function maximizeWindowIn<W extends WindowLike>(windows: W[], id: string)
  *  stored frame: entering compact clears neither isMaximized nor the frame, so expanding
  *  returns to exactly where the window was (maximized included). Only a window that is open
  *  and visible can become a bubble, so a late tool call from a stream that outlived its window
- *  can't leave a closed window flagged compact. */
+ *  can't leave a closed window flagged compact. A window waiting on the visitor's answer to a
+ *  close confirmation can't become one either: its sheet doesn't fit in a bubble, and the
+ *  visitor is mid-decision (minimizeWindowIn ignores it for the same reason). */
 export function setCompactIn<W extends WindowLike>(windows: W[], id: string, compact: boolean): W[] {
   const w = windows.find((x) => x.id === id);
   if (!w) return windows;
-  if (compact && (!w.isOpen || w.isMinimized)) return windows;
+  if (compact && (!w.isOpen || w.isMinimized || w.closeRequested)) return windows;
   if (w.isCompact === compact) return windows;
-  return replace(windows, { ...w, isCompact: compact });
+  // Raise on a change in EITHER direction. A bubble ignores the shared z-order (Window.tsx pins it
+  // above the other windows), so one that expands comes back at whatever stale z it had, possibly
+  // under windows opened while it was a bubble. A visitor's Expand click focuses the window first,
+  // but a programmatic expand (the time-limit hangup, a blocked gate answer) has no click to do it,
+  // and its "Call ended" screen would open hidden behind another window.
+  return bringToFront(replace(windows, { ...w, isCompact: compact }), id);
 }
 
 /** A drag/resize wrote its result back. No-op for a window that is closed, maximized or

@@ -22,6 +22,19 @@ export type GateResult = { status: 'allowed' } | { status: 'blocked'; reason: Bl
 // on the same clock so the two never stack.
 export const GATE_TIMEOUT_MS = 3000;
 
+// How long a call may last before the client hangs up on its own (desktop only -- see O3 in the
+// window-lifecycle plan). Mirrors the backend's own cap: the server stays the authority, and a
+// request past ITS cap gets a 429, which the call component already turns into the same hangup, so
+// if the server's cap is ever shorter than this, the 429 simply arrives first. This timer is for the
+// call that goes quiet: the server only enforces the cap when a request reaches it, and an idle call
+// parked in a bubble makes none.
+export const CALL_CAP_MS = 10 * 60 * 1000;
+
+// The twin's goodbye at the time limit. Shown as a caption while the call winds down and again on the
+// "Call ended" screen, so a call that hit the limit while parked in a bubble (which has no caption
+// strip) still tells the visitor why it ended.
+export const CAP_MESSAGE = "We've hit the time limit for this call -- let's keep going over email: pk.kowadkar@gmail.com!";
+
 export async function checkCallStart(sessionId: string): Promise<GateResult> {
   if (!API_URL) return { status: 'allowed' };
   try {
@@ -52,7 +65,7 @@ export function reportCallEnd(sessionId: string, seconds: number): void {
   if (!API_URL) return;
   const body = JSON.stringify({
     session_id: sessionId,
-    seconds: Math.max(0, Math.min(Math.round(seconds), 600)),
+    seconds: Math.max(0, Math.min(Math.round(seconds), CALL_CAP_MS / 1000)),
   });
   const url = `${API_URL}/api/call/end`;
   try {

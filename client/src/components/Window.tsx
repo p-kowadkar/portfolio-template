@@ -124,8 +124,10 @@ function Window({
       dragHandleClassName="window-drag-handle"
       // Compact windows deliberately ignore the shared focus-order zIndex pool —
       // the whole point is staying visible/reachable no matter what else gets
-      // focused on top of it (e.g. Canvas/Scheduler opening mid-call).
-      style={{ zIndex: isCompact ? 9999 : zIndex, position: 'absolute' }}
+      // focused on top of it (e.g. Canvas/Scheduler opening mid-call). So does a window with its
+      // close-confirmation sheet up: the visitor is mid-decision, and a window opened meanwhile
+      // (a tool call opening Canvas) must not bury the question, with keyboard focus trapped in it.
+      style={{ zIndex: isCompact || sheetUp ? 9999 : zIndex, position: 'absolute' }}
       onMouseDown={() => onFocus(id)}
       bounds="parent"
       resizeHandleStyles={{
