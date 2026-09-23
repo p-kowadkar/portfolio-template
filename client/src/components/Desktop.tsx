@@ -40,8 +40,8 @@ const appComponents: Record<string, React.ReactNode> = {
 
 export default function Desktop({ windowManager }: DesktopProps) {
   const {
-    windows, openWindow, closeWindow, minimizeWindow, maximizeWindow, focusWindow,
-    setWindowGeometry, clampWindowsToViewport,
+    windows, openWindow, closeWindow, cancelClose, minimizeWindow, maximizeWindow, focusWindow, setWindowCompact,
+    setWindowGeometry, clampWindowsToViewport, setWindowPolicy, resetWindowRuntime,
   } = windowManager;
   const [desktopClicked, setDesktopClicked] = useState(false);
 
@@ -82,7 +82,7 @@ export default function Desktop({ windowManager }: DesktopProps) {
 
   return (
     <WindowParamsProvider windows={windows}>
-    <WindowActionsProvider openWindow={openWindow}>
+    <WindowActionsProvider openWindow={openWindow} setWindowCompact={setWindowCompact} setWindowPolicy={setWindowPolicy}>
     <div
       className="desktop-noise desktop-root fixed inset-0 overflow-hidden"
       style={{
@@ -141,6 +141,8 @@ export default function Desktop({ windowManager }: DesktopProps) {
                 onMaximize={maximizeWindow}
                 onFocus={focusWindow}
                 onGeometryChange={setWindowGeometry}
+                onCancelClose={cancelClose}
+                onResetRuntime={resetWindowRuntime}
                 area={area}
                 // Window has always styled unfocused chrome (gray traffic lights, lighter
                 // shadow) but was never told which window is focused, so every window

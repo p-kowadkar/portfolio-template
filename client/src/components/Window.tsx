@@ -12,11 +12,12 @@
  *  - Window shadow: deep drop shadow when focused, lighter when not
  */
 
-import { memo, useState } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Rnd } from 'react-rnd';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { WindowState, WindowManager } from '../hooks/useWindowManager';
-import { MENUBAR_H, MIN_W, MIN_H, getViewport, initialFrame, type Area, type Frame } from '../lib/windowState';
+import { WindowSelfProvider } from '../contexts/WindowParamsContext';
+import { MENUBAR_H, MIN_W, MIN_H, getViewport, initialFrame, type Area, type CloseGuard, type Frame } from '../lib/windowState';
 
 interface WindowProps extends WindowState {
   onClose: WindowManager['closeWindow'];
@@ -25,6 +26,11 @@ interface WindowProps extends WindowState {
   onFocus: WindowManager['focusWindow'];
   /** A drag/resize finished: write the window's new frame back to the manager. */
   onGeometryChange: WindowManager['setWindowGeometry'];
+  /** The visitor answered the close-confirmation sheet with Cancel. */
+  onCancelClose: WindowManager['cancelClose'];
+  /** This window's app instance is going away without a close (an unmount): drop the bubble and
+   *  policy it left behind. */
+  onResetRuntime: WindowManager['resetWindowRuntime'];
   /** The desktop area (viewport minus the menu bar and Dock zone): what maximize and the
    *  compact bubble are sized and placed from. */
   area: Area;
@@ -52,16 +58,33 @@ function Window({
   size,
   defaultOffset,
   defaultSize,
+  closeGuard,
+  closeRequested,
   area,
   onClose,
   onMinimize,
   onMaximize,
   onFocus,
   onGeometryChange,
+  onCancelClose,
+  onResetRuntime,
   children,
   isFocused = true,
 }: WindowProps) {
   const [trafficHovered, setTrafficHovered] = useState(false);
+
+  // An unmount is not always a close (the desktop shell can be swapped for the mobile one, and a
+  // future sprint's minimize will stop unmounting entirely), and the policy and bubble belong to
+  // the app instance that just went away. The manager outlives it, so clear them, or a dead
+  // window's bubble and "are you sure?" guard would come back on the next mount. A normal close
+  // has already reset them, which makes this a no-op.
+  useEffect(() => () => onResetRuntime(id), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sheetUp = closeRequested && !!closeGuard;
+
+  // What this window's own app can ask about it (see useWindowSelf). Memoized per window, and above
+  // the early return below (hooks must not be conditional).
+  const self = useMemo(() => ({ id, isMinimized, isFocused }), [id, isMinimized, isFocused]);
 
   if (!isOpen || isMinimized) return null;
 
@@ -139,6 +162,7 @@ function Window({
       <motion.div
         className="flex flex-col w-full h-full"
         style={{
+          position: 'relative', // anchors the close-confirmation sheet
           borderRadius: '12px',
           overflow: 'hidden',
           border: '1px solid rgba(255,255,255,0.1)',
@@ -224,9 +248,11 @@ function Window({
           </span>
         </div>
 
-        {/* ── Content area ── */}
+        {/* ── Content area ── (inert while the close sheet is up, so the app underneath can be
+            neither clicked nor tabbed into; the title bar stays live) */}
         <div
           className="window-content flex-1 overflow-auto"
+          inert={sheetUp}
           onWheel={(e) => e.stopPropagation()}
           style={{
             background: 'rgba(26, 26, 28, 0.97)',
@@ -234,8 +260,20 @@ function Window({
             WebkitBackdropFilter: 'blur(40px) saturate(180%)',
           }}
         >
-          {children}
+          <WindowSelfProvider value={self}>{children}</WindowSelfProvider>
         </div>
+
+        {/* ── Close confirmation ── raised when a window with a closeGuard is asked to close. */}
+        <AnimatePresence>
+          {sheetUp && closeGuard && (
+            <CloseGuardSheet
+              key="close-guard"
+              guard={closeGuard}
+              onCancel={() => onCancelClose(id)}
+              onConfirm={() => onClose(id, true)}
+            />
+          )}
+        </AnimatePresence>
       </motion.div>
     </Rnd>
   );
@@ -246,6 +284,123 @@ function Window({
 // window objects it changed, callbacks are useCallbacks, `children` are module-level elements,
 // and `area` is state in Desktop).
 export default memo(Window);
+
+/* ─────────────────────────────────────────────────────────────
+   CloseGuardSheet — the "are you sure?" that a guarded window raises on close
+
+   Lives INSIDE the window (a per-window sheet, like a macOS document sheet), not as a page-wide
+   modal: a page modal would block the Canvas/Scheduler windows an app has just opened. Local to
+   this file rather than the repo's shadcn AlertDialog (components/ui/alert-dialog.tsx), which is
+   unused scaffold that portals a full-page overlay with its own theme tokens and would sit above
+   everything, including whatever the visitor just asked to open.
+
+   Cancel gets the initial focus, so Enter or Escape cancels -- a stray Enter must not confirm a
+   destructive action. Two focusable buttons make a complete focus trap trivial. Clicking the
+   scrim does nothing: an alert needs an explicit answer.
+   ───────────────────────────────────────────────────────────── */
+
+function CloseGuardSheet({
+  guard,
+  onCancel,
+  onConfirm,
+}: {
+  guard: CloseGuard;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const uid = useId();
+
+  useEffect(() => {
+    cancelRef.current?.focus();
+  }, []);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onCancel();
+    } else if (e.key === 'Tab') {
+      // Only two focusable things exist, so "trap" is just "the other one".
+      e.preventDefault();
+      (document.activeElement === cancelRef.current ? confirmRef.current : cancelRef.current)?.focus();
+    }
+  };
+
+  const button = (bg: string): React.CSSProperties => ({
+    flex: 1,
+    padding: '6px 0',
+    borderRadius: '7px',
+    border: 'none',
+    background: bg,
+    color: '#fff',
+    fontSize: '12px',
+    fontWeight: 500,
+    fontFamily: '-apple-system, "SF Pro Text", "Helvetica Neue", sans-serif',
+    cursor: 'default',
+  });
+
+  return (
+    <motion.div
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: MENUBAR_H, // below the title bar, which stays live (drag, red, green)
+        bottom: 0,
+        zIndex: 5,
+        background: 'rgba(0,0,0,0.35)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
+    >
+      <motion.div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={`${uid}-title`}
+        aria-describedby={`${uid}-body`}
+        onKeyDown={onKeyDown}
+        style={{
+          width: '260px',
+          maxWidth: '90%',
+          padding: '18px 16px 14px',
+          borderRadius: '12px',
+          background: 'rgba(40,40,44,0.96)',
+          backdropFilter: 'blur(30px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+          border: '0.5px solid rgba(255,255,255,0.14)',
+          boxShadow: '0 16px 48px rgba(0,0,0,0.55)',
+          textAlign: 'center',
+          fontFamily: '-apple-system, "SF Pro Text", "Helvetica Neue", sans-serif',
+        }}
+        initial={{ scale: 1.04, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 1.04, opacity: 0 }}
+        transition={{ duration: 0.15 }}
+      >
+        <p id={`${uid}-title`} style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f2', marginBottom: '4px' }}>
+          {guard.title}
+        </p>
+        <p id={`${uid}-body`} style={{ fontSize: '11px', lineHeight: 1.4, color: 'rgba(255,255,255,0.6)', marginBottom: '14px' }}>
+          {guard.body}
+        </p>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button ref={cancelRef} type="button" onClick={onCancel} style={button('rgba(255,255,255,0.12)')}>
+            Cancel
+          </button>
+          <button ref={confirmRef} type="button" onClick={onConfirm} style={button('#E50914')}>
+            {guard.confirmLabel}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
 
 /* ─────────────────────────────────────────────────────────────
    TrafficLight — authentic macOS Sequoia button
