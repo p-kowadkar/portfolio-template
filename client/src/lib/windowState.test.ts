@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MIN_H, MIN_W, areaOf, bringToFront, clampAllIn, clampFrame, closeWindowIn, initialFrame,
-  maximizeWindowIn, minimizeWindowIn, openWindowIn, restoreWindowIn, setCompactIn, setGeometryIn,
-  type Frame, type Viewport, type WindowLike,
+  MIN_H, MIN_W, areaOf, bringToFront, cancelCloseIn, clampAllIn, clampFrame, closeWindowIn, initialFrame,
+  maximizeWindowIn, minimizeWindowIn, openWindowIn, resetRuntimeIn, restoreWindowIn, setCompactIn,
+  setGeometryIn, setPolicyIn,
+  type CloseGuard, type Frame, type Viewport, type WindowLike,
 } from './windowState';
 
 const win = (over: Partial<WindowLike> = {}): WindowLike => ({
@@ -16,6 +17,9 @@ const win = (over: Partial<WindowLike> = {}): WindowLike => ({
   size: null,
   defaultOffset: { x: 0, y: 0 },
   defaultSize: { width: 600, height: 400 },
+  minimizeMode: 'hide',
+  closeGuard: null,
+  closeRequested: false,
   ...over,
 });
 const open = (over: Partial<WindowLike> = {}) =>
@@ -204,6 +208,137 @@ describe('minimizeWindowIn', () => {
     const min = [open({ isMinimized: true })];
     expect(minimizeWindowIn(closed, 'a')).toBe(closed);
     expect(minimizeWindowIn(min, 'a')).toBe(min);
+  });
+});
+
+describe('minimizeWindowIn (compact mode)', () => {
+  it("shrinks into the bubble instead of hiding, and touches nothing else (frame and isMaximized stay)", () => {
+    const [w] = minimizeWindowIn([open({ minimizeMode: 'compact', isMaximized: true })], 'a');
+    expect(w).toMatchObject({ isCompact: true, isMinimized: false, isMaximized: true });
+    expect(w.position).toEqual({ x: 100, y: 80 });
+  });
+  it('is a no-op for a window that is already a bubble (Minimize All leaves the call alone)', () => {
+    const ws = [open({ minimizeMode: 'compact', isCompact: true })];
+    expect(minimizeWindowIn(ws, 'a')).toBe(ws);
+  });
+  it('is ignored while a close confirmation is up', () => {
+    const ws = [open({ closeRequested: true, closeGuard: { title: 't', body: 'b', confirmLabel: 'c' } })];
+    expect(minimizeWindowIn(ws, 'a')).toBe(ws);
+  });
+  it('is still ignored for a closed window in compact mode', () => {
+    const ws = [win({ minimizeMode: 'compact' })];
+    expect(minimizeWindowIn(ws, 'a')).toBe(ws);
+  });
+});
+
+describe('closeWindowIn (guarded)', () => {
+  const guard: CloseGuard = { title: 'End Call?', body: 'Closing the window will end the current call.', confirmLabel: 'End Call' };
+
+  it('raises the sheet instead of closing', () => {
+    const [w] = closeWindowIn([open({ closeGuard: guard })], 'a');
+    expect(w).toMatchObject({ isOpen: true, closeRequested: true });
+  });
+  it('brings a bubble back to a full window first (a 240x200 bubble cannot host the sheet)', () => {
+    const [w] = closeWindowIn([open({ closeGuard: guard, isCompact: true })], 'a');
+    expect(w).toMatchObject({ isCompact: false, closeRequested: true, isOpen: true });
+  });
+  it('brings a hidden window back first, and keeps it maximized', () => {
+    const [w] = closeWindowIn([open({ closeGuard: guard, isMinimized: true, isMaximized: true })], 'a');
+    expect(w).toMatchObject({ isMinimized: false, isMaximized: true, closeRequested: true });
+  });
+  it('brings the window to the front', () => {
+    const ws = closeWindowIn([open({ id: 'a', closeGuard: guard, zIndex: 10 }), open({ id: 'b', zIndex: 12 })], 'a');
+    expect(ws.find((w) => w.id === 'a')!.zIndex).toBe(13);
+  });
+  it('asking twice returns the SAME array (a second red click, or Close All then red)', () => {
+    const once = closeWindowIn([open({ closeGuard: guard })], 'a');
+    expect(closeWindowIn(once, 'a')).toBe(once);
+  });
+  it('force closes it, resets the policy, and keeps the frame and params', () => {
+    const [w] = closeWindowIn(
+      [open({ closeGuard: guard, closeRequested: true, minimizeMode: 'compact', isCompact: true, params: { p: 1 } })],
+      'a',
+      true,
+    );
+    expect(w).toMatchObject({ isOpen: false, isCompact: false, minimizeMode: 'hide', closeGuard: null, closeRequested: false, params: { p: 1 } });
+    expect(w.position).toEqual({ x: 100, y: 80 });
+  });
+  it('an unguarded window still closes at once, and a plain close drops any leftover policy', () => {
+    const [w] = closeWindowIn([open({ minimizeMode: 'compact' })], 'a');
+    expect(w).toMatchObject({ isOpen: false, minimizeMode: 'hide' });
+  });
+  it('a closed window with a leftover policy is not "already closed": it gets reset', () => {
+    const [w] = closeWindowIn([win({ minimizeMode: 'compact' })], 'a');
+    expect(w.minimizeMode).toBe('hide');
+  });
+});
+
+describe('cancelCloseIn', () => {
+  it('drops the sheet and leaves the window (and the guard) as it is', () => {
+    const guard = { title: 't', body: 'b', confirmLabel: 'c' };
+    const [w] = cancelCloseIn([open({ closeGuard: guard, closeRequested: true })], 'a');
+    expect(w).toMatchObject({ isOpen: true, closeRequested: false, closeGuard: guard });
+  });
+  it('is a no-op when no close was requested', () => {
+    const ws = [open()];
+    expect(cancelCloseIn(ws, 'a')).toBe(ws);
+  });
+});
+
+describe('setPolicyIn', () => {
+  const guard: CloseGuard = { title: 'End Call?', body: 'Closing the window will end the current call.', confirmLabel: 'End Call' };
+
+  it('sets the minimize mode and the close guard', () => {
+    const [w] = setPolicyIn([open()], 'a', { minimizeMode: 'compact', closeGuard: guard });
+    expect(w).toMatchObject({ minimizeMode: 'compact', closeGuard: guard });
+  });
+  it('compares the guard BY VALUE: a fresh identical literal returns the SAME array (no effect loop)', () => {
+    const ws = setPolicyIn([open()], 'a', { closeGuard: guard });
+    expect(setPolicyIn(ws, 'a', { closeGuard: { ...guard } })).toBe(ws);
+    expect(setPolicyIn(ws, 'a', { minimizeMode: 'hide', closeGuard: { ...guard } })).toBe(ws);
+  });
+  it('keeps the existing guard object when the new one is equal, so downstream memoization holds', () => {
+    const ws = setPolicyIn([open()], 'a', { closeGuard: guard });
+    const stored = ws[0].closeGuard;
+    const again = setPolicyIn(ws, 'a', { closeGuard: { ...guard }, minimizeMode: 'compact' });
+    expect(again[0].closeGuard).toBe(stored);
+  });
+  it('a changed guard is written', () => {
+    const ws = setPolicyIn([open()], 'a', { closeGuard: guard });
+    expect(setPolicyIn(ws, 'a', { closeGuard: { ...guard, body: 'different' } })[0].closeGuard!.body).toBe('different');
+  });
+  it('leaves a field alone when it is not in the patch', () => {
+    const [w] = setPolicyIn([open({ minimizeMode: 'compact', closeGuard: guard })], 'a', { minimizeMode: 'hide' });
+    expect(w).toMatchObject({ minimizeMode: 'hide', closeGuard: guard });
+  });
+  it('clearing the guard dismisses a sheet that is up (the call ended by itself mid-confirm)', () => {
+    const [w] = setPolicyIn([open({ closeGuard: guard, closeRequested: true })], 'a', { closeGuard: null });
+    expect(w).toMatchObject({ closeGuard: null, closeRequested: false, isOpen: true });
+  });
+  it('is a no-op for a closed window (an unmount cleanup can fire after the close)', () => {
+    const ws = [win()];
+    expect(setPolicyIn(ws, 'a', { minimizeMode: 'compact', closeGuard: guard })).toBe(ws);
+  });
+  it('an unknown id changes nothing', () => {
+    const ws = [open()];
+    expect(setPolicyIn(ws, 'nope', { minimizeMode: 'compact' })).toBe(ws);
+  });
+});
+
+describe('resetRuntimeIn', () => {
+  it('drops the bubble and the policy an unmounted app instance left behind', () => {
+    const guard = { title: 't', body: 'b', confirmLabel: 'c' };
+    const [w] = resetRuntimeIn([open({ isCompact: true, minimizeMode: 'compact', closeGuard: guard, closeRequested: true })], 'a');
+    expect(w).toMatchObject({ isCompact: false, minimizeMode: 'hide', closeGuard: null, closeRequested: false, isOpen: true });
+  });
+  it('returns the SAME array when there is nothing to reset (the normal close path)', () => {
+    const ws = [open()];
+    expect(resetRuntimeIn(ws, 'a')).toBe(ws);
+  });
+  it('does not touch the frame, maximized state, or params', () => {
+    const [w] = resetRuntimeIn([open({ isCompact: true, isMaximized: true, params: { p: 1 } })], 'a');
+    expect(w).toMatchObject({ isMaximized: true, params: { p: 1 } });
+    expect(w.position).toEqual({ x: 100, y: 80 });
   });
 });
 

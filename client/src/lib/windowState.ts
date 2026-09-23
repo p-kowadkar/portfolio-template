@@ -5,7 +5,7 @@
  *
  * Why the manager owns each window's frame at all: react-rnd used to keep x/y/width/height
  * in its own internal state, seeded from `default` on mount. So a window's position was lost
- * whenever it unmounted (a close), un-maximize and un-compact could not
+ * whenever it unmounted (close, and today minimize too), un-maximize and un-compact could not
  * return it to where it was, and nothing outside react-rnd could reposition a window. With the
  * frame in the manager, Rnd becomes a fully controlled component and maximize/compact are
  * pure render-time overrides that never overwrite it.
@@ -29,6 +29,14 @@ export interface Viewport { width: number; height: number }
 /** The desktop area windows live in: the viewport minus the menu bar and the Dock zone. */
 export interface Area { width: number; height: number }
 
+/** What the yellow light does. 'hide' minimizes (the default); 'compact' shrinks the window into
+ *  the corner bubble instead, for a window with something live that must not be interrupted
+ *  (the Digital Twin call: audio and video keep going in the bubble). */
+export type MinimizeMode = 'hide' | 'compact';
+
+/** Copy for the "are you sure?" sheet that closing a guarded window raises. */
+export interface CloseGuard { title: string; body: string; confirmLabel: string }
+
 /** The fields these transformers read and write; useWindowManager's WindowState extends it. */
 export interface WindowLike {
   id: string;
@@ -45,6 +53,14 @@ export interface WindowLike {
   defaultOffset: Point;
   defaultSize: Size;
   params?: Record<string, unknown>;
+  /** Per-window policy, declared by the app that owns the window (through
+   *  WindowActionsContext.setWindowPolicy) and dropped again when the window closes. The window
+   *  manager knows nothing about calls: the Digital Twin just says "yellow means bubble, and
+   *  closing me needs a confirmation while a call is live". */
+  minimizeMode: MinimizeMode;
+  closeGuard: CloseGuard | null;
+  /** A guarded close was requested and the confirm sheet is up. */
+  closeRequested: boolean;
 }
 
 export const MENUBAR_H = 28;
@@ -168,20 +184,96 @@ export function restoreWindowIn<W extends WindowLike>(windows: W[], id: string, 
   );
 }
 
-/** Quit: the flags reset, but the frame and params stay (macOS remembers a window's frame). */
-export function closeWindowIn<W extends WindowLike>(windows: W[], id: string): W[] {
+const sameGuard = (a: CloseGuard | null, b: CloseGuard | null) =>
+  a === b || (!!a && !!b && a.title === b.title && a.body === b.body && a.confirmLabel === b.confirmLabel);
+
+const hasDefaultPolicy = (w: WindowLike) => w.minimizeMode === 'hide' && w.closeGuard === null && !w.closeRequested;
+
+/** Quit: the flags and the policy reset, but the frame and params stay (macOS remembers a
+ *  window's frame).
+ *
+ *  A GUARDED window (one with a closeGuard) is not closed by this unless `force` is set: it
+ *  raises the confirm sheet instead (closeRequested). Guarded-by-default means every caller --
+ *  the red light, Close All, anything added later -- gets the guard without knowing it exists;
+ *  only the sheet's confirm button passes `force`. The sheet lives inside the window and a
+ *  240x200 bubble or a hidden window cannot host it, so a request first brings the window back
+ *  to a full, visible one. Asking twice is harmless (the same array comes back). */
+export function closeWindowIn<W extends WindowLike>(windows: W[], id: string, force = false): W[] {
   const w = windows.find((x) => x.id === id);
   if (!w) return windows;
-  if (!w.isOpen && !w.isMinimized && !w.isMaximized && !w.isCompact) return windows;
-  return replace(windows, { ...w, isOpen: false, isMinimized: false, isMaximized: false, isCompact: false });
+  if (w.isOpen && w.closeGuard && !force) {
+    if (w.closeRequested && !w.isMinimized && !w.isCompact) return bringToFront(windows, id);
+    return bringToFront(replace(windows, { ...w, closeRequested: true, isMinimized: false, isCompact: false }), id);
+  }
+  if (!w.isOpen && !w.isMinimized && !w.isMaximized && !w.isCompact && hasDefaultPolicy(w)) return windows;
+  return replace(windows, {
+    ...w,
+    isOpen: false,
+    isMinimized: false,
+    isMaximized: false,
+    isCompact: false,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
+  });
 }
 
-/** Hide. Also drops compact (a hidden bubble makes no sense, and a stale isCompact used to
- *  resurface on the next open as a chrome-less bubble). isMaximized is kept so restore comes
- *  back maximized. */
+/** The visitor answered the confirm sheet with Cancel. */
+export function cancelCloseIn<W extends WindowLike>(windows: W[], id: string): W[] {
+  const w = windows.find((x) => x.id === id);
+  if (!w || !w.closeRequested) return windows;
+  return replace(windows, { ...w, closeRequested: false });
+}
+
+/** An app declares (or clears) its window's policy. No-op for a window that is not open: an app's
+ *  unmount cleanup may call this after the window closed. Compares the guard BY VALUE, because an
+ *  app sets it from an effect with a fresh object literal each time, and a same-array return is
+ *  what stops that from turning into an effect -> setState -> render loop. Clearing the guard also
+ *  dismisses a sheet that is up (e.g. the call ended by itself while "End Call?" was showing). */
+export function setPolicyIn<W extends WindowLike>(
+  windows: W[],
+  id: string,
+  patch: { minimizeMode?: MinimizeMode; closeGuard?: CloseGuard | null },
+): W[] {
+  const w = windows.find((x) => x.id === id);
+  if (!w || !w.isOpen) return windows;
+  const minimizeMode = patch.minimizeMode ?? w.minimizeMode;
+  const closeGuard = patch.closeGuard === undefined ? w.closeGuard : patch.closeGuard;
+  const closeRequested = closeGuard === null ? false : w.closeRequested;
+  if (minimizeMode === w.minimizeMode && sameGuard(closeGuard, w.closeGuard) && closeRequested === w.closeRequested) {
+    return windows;
+  }
+  return replace(windows, {
+    ...w,
+    minimizeMode,
+    closeGuard: sameGuard(closeGuard, w.closeGuard) ? w.closeGuard : closeGuard,
+    closeRequested,
+  });
+}
+
+/** The window's app instance is gone without a close (an unmount: the desktop shell was swapped
+ *  for the mobile one, or the window was hidden). Its policy and bubble belonged to that instance,
+ *  and the manager outlives it, so drop them: otherwise a dead call's bubble and guard would come
+ *  back on the next mount. */
+export function resetRuntimeIn<W extends WindowLike>(windows: W[], id: string): W[] {
+  const w = windows.find((x) => x.id === id);
+  if (!w) return windows;
+  if (!w.isCompact && hasDefaultPolicy(w)) return windows;
+  return replace(windows, { ...w, isCompact: false, minimizeMode: 'hide', closeGuard: null, closeRequested: false });
+}
+
+/** What yellow does, per the window's minimizeMode. 'hide' hides it (also drops compact: a hidden
+ *  bubble makes no sense, and a stale isCompact used to resurface on the next open as a
+ *  chrome-less bubble; isMaximized is kept so restore comes back maximized). 'compact' shrinks it
+ *  into the corner bubble instead and touches nothing else: the frame and isMaximized stay, so
+ *  expanding returns to exactly where it was. Ignored while a close confirmation is up, and for a
+ *  window that is closed or already hidden. */
 export function minimizeWindowIn<W extends WindowLike>(windows: W[], id: string): W[] {
   const w = windows.find((x) => x.id === id);
-  if (!w || !w.isOpen || w.isMinimized) return windows;
+  if (!w || !w.isOpen || w.isMinimized || w.closeRequested) return windows;
+  if (w.minimizeMode === 'compact') {
+    return w.isCompact ? windows : replace(windows, { ...w, isCompact: true });
+  }
   return replace(windows, { ...w, isMinimized: true, isCompact: false });
 }
 

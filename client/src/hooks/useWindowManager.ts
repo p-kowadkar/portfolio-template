@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
 import {
-  getViewport, bringToFront, openWindowIn, restoreWindowIn, closeWindowIn, minimizeWindowIn,
-  maximizeWindowIn, setCompactIn, setGeometryIn, clampAllIn, type WindowLike, type Point, type Size,
+  getViewport, bringToFront, openWindowIn, restoreWindowIn, closeWindowIn, cancelCloseIn, minimizeWindowIn,
+  maximizeWindowIn, setCompactIn, setGeometryIn, setPolicyIn, resetRuntimeIn, clampAllIn,
+  type WindowLike, type Point, type Size, type MinimizeMode, type CloseGuard,
 } from '../lib/windowState';
 
 /** A desktop window. The pure fields (flags, z-order, frame) live in lib/windowState.ts along
@@ -27,6 +28,9 @@ const initialWindows: WindowState[] = [
     zIndex: 10,
     position: null,
     size: null,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
     defaultOffset: { x: 0, y: 0 },
     defaultSize: { width: 960, height: 600 },
   },
@@ -40,6 +44,9 @@ const initialWindows: WindowState[] = [
     zIndex: 10,
     position: null,
     size: null,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
     defaultOffset: { x: 40, y: 0 },
     defaultSize: { width: 420, height: 580 },
   },
@@ -53,6 +60,9 @@ const initialWindows: WindowState[] = [
     zIndex: 10,
     position: null,
     size: null,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
     defaultOffset: { x: -20, y: 0 },
     defaultSize: { width: 560, height: 460 },
   },
@@ -66,6 +76,9 @@ const initialWindows: WindowState[] = [
     zIndex: 10,
     position: null,
     size: null,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
     defaultOffset: { x: 60, y: 0 },
     defaultSize: { width: 460, height: 520 },
   },
@@ -79,6 +92,9 @@ const initialWindows: WindowState[] = [
     zIndex: 10,
     position: null,
     size: null,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
     defaultOffset: { x: 0, y: 0 },
     defaultSize: { width: 1060, height: 640 },
   },
@@ -92,6 +108,9 @@ const initialWindows: WindowState[] = [
     zIndex: 10,
     position: null,
     size: null,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
     defaultOffset: { x: 30, y: 0 },
     defaultSize: { width: 720, height: 560 },
   },
@@ -105,6 +124,9 @@ const initialWindows: WindowState[] = [
     zIndex: 10,
     position: null,
     size: null,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
     defaultOffset: { x: 0, y: 0 },
     defaultSize: { width: 900, height: 620 },
   },
@@ -118,6 +140,9 @@ const initialWindows: WindowState[] = [
     zIndex: 10,
     position: null,
     size: null,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
     defaultOffset: { x: 0, y: 0 },
     defaultSize: { width: 640, height: 420 },
   },
@@ -131,6 +156,9 @@ const initialWindows: WindowState[] = [
     zIndex: 10,
     position: null,
     size: null,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
     defaultOffset: { x: 10, y: 0 },
     defaultSize: { width: 760, height: 560 },
   },
@@ -144,6 +172,9 @@ const initialWindows: WindowState[] = [
     zIndex: 10,
     position: null,
     size: null,
+    minimizeMode: 'hide',
+    closeGuard: null,
+    closeRequested: false,
     defaultOffset: { x: 0, y: 0 },
     defaultSize: { width: 900, height: 700 },
   },
@@ -154,7 +185,12 @@ export interface WindowManager {
   openWindow: (id: string, params?: Record<string, unknown>) => void;
   /** Un-minimize a window (no params) and bring it to the front. */
   restoreWindow: (id: string) => void;
-  closeWindow: (id: string) => void;
+  /** Close (quit) a window. A window with a closeGuard raises its confirm sheet instead, unless
+   *  `force` is set (only the sheet's confirm button passes it). */
+  closeWindow: (id: string, force?: boolean) => void;
+  /** The visitor answered the confirm sheet with Cancel. */
+  cancelClose: (id: string) => void;
+  /** Yellow light: hides the window, or (minimizeMode 'compact') shrinks it into the corner bubble. */
   minimizeWindow: (id: string) => void;
   maximizeWindow: (id: string) => void;
   focusWindow: (id: string) => void;
@@ -163,6 +199,10 @@ export interface WindowManager {
   setWindowGeometry: (id: string, patch: { position?: Point; size?: Size }) => void;
   /** The browser was resized: pull every remembered frame back inside the desktop area. */
   clampWindowsToViewport: () => void;
+  /** An app declares what yellow does for its window and whether closing it needs confirming. */
+  setWindowPolicy: (id: string, patch: { minimizeMode?: MinimizeMode; closeGuard?: CloseGuard | null }) => void;
+  /** An app instance is gone without a close: drop the bubble and policy it left behind. */
+  resetWindowRuntime: (id: string) => void;
 }
 
 // Each action is a thin wrapper over a pure transformer in lib/windowState.ts, which is where
@@ -182,8 +222,12 @@ export function useWindowManager(): WindowManager {
     setWindows((prev) => restoreWindowIn(prev, id, getViewport()));
   }, []);
 
-  const closeWindow = useCallback((id: string) => {
-    setWindows((prev) => closeWindowIn(prev, id));
+  const closeWindow = useCallback((id: string, force = false) => {
+    setWindows((prev) => closeWindowIn(prev, id, force));
+  }, []);
+
+  const cancelClose = useCallback((id: string) => {
+    setWindows((prev) => cancelCloseIn(prev, id));
   }, []);
 
   const minimizeWindow = useCallback((id: string) => {
@@ -213,8 +257,16 @@ export function useWindowManager(): WindowManager {
     setWindows((prev) => clampAllIn(prev, getViewport()));
   }, []);
 
+  const setWindowPolicy = useCallback((id: string, patch: { minimizeMode?: MinimizeMode; closeGuard?: CloseGuard | null }) => {
+    setWindows((prev) => setPolicyIn(prev, id, patch));
+  }, []);
+
+  const resetWindowRuntime = useCallback((id: string) => {
+    setWindows((prev) => resetRuntimeIn(prev, id));
+  }, []);
+
   return {
-    windows, openWindow, restoreWindow, closeWindow, minimizeWindow, maximizeWindow,
-    focusWindow, setWindowCompact, setWindowGeometry, clampWindowsToViewport,
+    windows, openWindow, restoreWindow, closeWindow, cancelClose, minimizeWindow, maximizeWindow,
+    focusWindow, setWindowCompact, setWindowGeometry, clampWindowsToViewport, setWindowPolicy, resetWindowRuntime,
   };
 }
