@@ -317,7 +317,14 @@ function DockItem({
   const springY = useSpring(liftY, { stiffness: 350, damping: 28 });
 
   return (
-    <div className="relative flex flex-col items-center" style={{ width: ICON_SIZE, flexShrink: 0 }}>
+    // data-dock-id is the anchor lib/dockTarget.ts measures (where a minimizing window flies to). It
+    // is on this static wrapper, not the icon below, because the icon carries the magnification
+    // scale and lift springs, so its rect moves as the mouse does.
+    <div
+      className="relative flex flex-col items-center"
+      style={{ width: ICON_SIZE, flexShrink: 0 }}
+      data-dock-id={app.id}
+    >
       {/* Tooltip */}
       <AnimatePresence>
         {hovered && (
