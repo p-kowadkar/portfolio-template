@@ -11,6 +11,10 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import type { WindowState } from '../hooks/useWindowManager';
+import { windowMenuRows } from '../lib/windowMenu';
+import { canMinimize, canZoom } from '../lib/windowState';
+import { APP_LABELS } from '../data/appLabels';
 
 const PROFILE_IMAGE =
   'https://files.manuscdn.com/user_upload_by_module/session_file/115134064/UqpYnDLTsOlaAVmS.png';
@@ -67,19 +71,30 @@ const ACHIEVEMENTS = [
 ];
 
 interface MenuBarProps {
+  /** The window the visitor is working in (the manager's frontWindowId), or null. */
   activeApp: string | null;
+  /** Every window, for the Window menu's list of open windows. */
+  windows: WindowState[];
+  /** What a menu item that opens an app means: open it, restore it, expand it, or focus it. */
   onOpenApp?: (id: string) => void;
+  onActivateWindow?: (id: string) => void;
+  onMinimizeWindow?: (id: string) => void;
+  onZoomWindow?: (id: string) => void;
   onMinimizeAll?: () => void;
+  onShowAllWindows?: () => void;
   onCloseAll?: () => void;
-  onBringAllToFront?: () => void;
 }
 
 export default function MenuBar({
   activeApp,
+  windows,
   onOpenApp,
+  onActivateWindow,
+  onMinimizeWindow,
+  onZoomWindow,
   onMinimizeAll,
+  onShowAllWindows,
   onCloseAll,
-  onBringAllToFront,
 }: MenuBarProps) {
   const [time, setTime] = useState(new Date());
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -173,7 +188,15 @@ export default function MenuBar({
       browser: 'Safari',
       cv: 'Preview',
       mystory: 'My Story',
-    }[activeApp ?? ''] ?? 'Finder';
+      terminal: 'Terminal',
+      canvas: 'Canvas',
+      scheduler: 'Calendar',
+    }[activeApp ?? ''] ?? 'Finder'; // nothing visible (everything minimized): the desktop itself is Finder
+
+  const windowRows = windowMenuRows(windows, activeApp, (id) => APP_LABELS[id] ?? id);
+  // Enabled exactly when the click would do something: these are the reducers' own predicates, so a lone
+  // call bubble or a window with its close sheet up greys them out instead of accepting a dead click.
+  const frontWindow = windows.find((w) => w.id === activeApp);
 
   const toggle = (id: string) => setOpenMenu((prev) => (prev === id ? null : id));
   const hover  = (id: string) => { if (openMenu !== null) setOpenMenu(id); };
@@ -247,11 +270,11 @@ export default function MenuBar({
               <div style={{ height: 4 }} />
               <DropItem label="About This Portfolio" onClick={() => { onOpenApp?.('browser'); close(); }} isLight={isLight} />
               <Divider isLight={isLight} />
-              <DropItem label="GitHub" shortcut="↗" onClick={() => { window.open('https://github.com/p-kowadkar', '_blank'); close(); }} isLight={isLight} />
-              <DropItem label="LinkedIn" shortcut="↗" onClick={() => { window.open('https://linkedin.com/in/pkowadkar', '_blank'); close(); }} isLight={isLight} />
-              <DropItem label="Telegram" shortcut="↗" onClick={() => { window.open('https://t.me/pk_kowadkar', '_blank'); close(); }} isLight={isLight} />
+              <DropItem label="GitHub" trailing="↗" onClick={() => { window.open('https://github.com/p-kowadkar', '_blank'); close(); }} isLight={isLight} />
+              <DropItem label="LinkedIn" trailing="↗" onClick={() => { window.open('https://linkedin.com/in/pkowadkar', '_blank'); close(); }} isLight={isLight} />
+              <DropItem label="Telegram" trailing="↗" onClick={() => { window.open('https://t.me/pk_kowadkar', '_blank'); close(); }} isLight={isLight} />
               <Divider isLight={isLight} />
-              <DropItem label="Email Me" shortcut="✉" onClick={() => { window.open('mailto:pk.kowadkar@gmail.com', '_blank'); close(); }} isLight={isLight} />
+              <DropItem label="Email Me" trailing="✉" onClick={() => { window.open('mailto:pk.kowadkar@gmail.com', '_blank'); close(); }} isLight={isLight} />
             </Dropdown>
           )}
         </AnimatePresence>
@@ -266,17 +289,18 @@ export default function MenuBar({
         <AnimatePresence>
           {openMenu === 'File' && (
             <Dropdown onClose={close} minWidth={210} isLight={isLight}>
-              <DropItem label="Open Projects" shortcut="⌘P" onClick={() => { onOpenApp?.('projects'); close(); }} isLight={isLight} />
-              <DropItem label="Open AIssistant" shortcut="⌘K" onClick={() => { onOpenApp?.('chat'); close(); }} isLight={isLight} />
-              <DropItem label="Open Browser" shortcut="⌘B" onClick={() => { onOpenApp?.('browser'); close(); }} isLight={isLight} />
+              <DropItem label="Open Projects" onClick={() => { onOpenApp?.('projects'); close(); }} isLight={isLight} />
+              <DropItem label="Open AIssistant" onClick={() => { onOpenApp?.('chat'); close(); }} isLight={isLight} />
+              <DropItem label="Open Browser" onClick={() => { onOpenApp?.('browser'); close(); }} isLight={isLight} />
               <Divider isLight={isLight} />
-              <DropItem label="Open Messages" shortcut="⌘M" onClick={() => { onOpenApp?.('messages'); close(); }} isLight={isLight} />
-              <DropItem label="Open Video Call" shortcut="⌘V" onClick={() => { onOpenApp?.('videocall'); close(); }} isLight={isLight} />
+              <DropItem label="Open Messages" onClick={() => { onOpenApp?.('messages'); close(); }} isLight={isLight} />
+              <DropItem label="Open Video Call" onClick={() => { onOpenApp?.('videocall'); close(); }} isLight={isLight} />
+              <DropItem label="Open Terminal" onClick={() => { onOpenApp?.('terminal'); close(); }} isLight={isLight} />
               <Divider isLight={isLight} />
-              <DropItem label="View Resume" shortcut="⌘R" onClick={() => { onOpenApp?.('cv'); close(); }} isLight={isLight} />
-              <DropItem label="My Story" shortcut="⌘S" onClick={() => { onOpenApp?.('mystory'); close(); }} isLight={isLight} />
+              <DropItem label="View Resume" onClick={() => { onOpenApp?.('cv'); close(); }} isLight={isLight} />
+              <DropItem label="My Story" onClick={() => { onOpenApp?.('mystory'); close(); }} isLight={isLight} />
               <Divider isLight={isLight} />
-              <DropItem label="View Source on GitHub" shortcut="↗" onClick={() => { window.open('https://github.com/p-kowadkar/pkowadkar-portfolio', '_blank'); close(); }} isLight={isLight} />
+              <DropItem label="View Source on GitHub" trailing="↗" onClick={() => { window.open('https://github.com/p-kowadkar/pkowadkar-portfolio', '_blank'); close(); }} isLight={isLight} />
             </Dropdown>
           )}
         </AnimatePresence>
@@ -323,7 +347,7 @@ export default function MenuBar({
               <SectionLabel label="Go To" isLight={isLight} />
               <DropItem label="Experience" onClick={() => { onOpenApp?.('browser'); close(); }} isLight={isLight} />
               <DropItem label="Education" onClick={() => { onOpenApp?.('browser'); close(); }} isLight={isLight} />
-              <DropItem label="CareerForge" shortcut="↗" onClick={() => { window.open('https://www.forge-your-future.com', '_blank'); close(); }} isLight={isLight} />
+              <DropItem label="CareerForge" trailing="↗" onClick={() => { window.open('https://www.forge-your-future.com', '_blank'); close(); }} isLight={isLight} />
             </Dropdown>
           )}
         </AnimatePresence>
@@ -333,32 +357,54 @@ export default function MenuBar({
         <AnimatePresence>
           {openMenu === 'Window' && (
             <Dropdown onClose={close} minWidth={230} isLight={isLight}>
-              <SectionLabel label="Arrange" isLight={isLight} />
               <DropItem
-                label="Tile Side by Side"
-                shortcut="⌃⌘T"
-                onClick={() => { onOpenApp?.('projects'); onOpenApp?.('browser'); close(); }}
+                label="Minimize"
+                disabled={!canMinimize(frontWindow)}
+                onClick={() => { if (activeApp) onMinimizeWindow?.(activeApp); close(); }}
                 isLight={isLight}
               />
               <DropItem
-                label="Cascade Windows"
-                shortcut="⌃⌘C"
-                onClick={() => { ['projects','chat','browser','messages'].forEach((id) => onOpenApp?.(id)); close(); }}
+                label="Zoom"
+                disabled={!canZoom(frontWindow)}
+                onClick={() => { if (activeApp) onZoomWindow?.(activeApp); close(); }}
+                isLight={isLight}
+              />
+              <DropItem
+                label="Minimize All"
+                disabled={!windows.some(canMinimize)}
+                onClick={() => { onMinimizeAll?.(); close(); }}
                 isLight={isLight}
               />
               <Divider isLight={isLight} />
-              <SectionLabel label="Manage" isLight={isLight} />
-              <DropItem label="Minimize All" shortcut="⌘H" onClick={() => { onMinimizeAll?.(); close(); }} isLight={isLight} />
-              <DropItem label="Bring All to Front" onClick={() => { onBringAllToFront?.(); close(); }} isLight={isLight} />
-              <DropItem label="Close All" shortcut="⌥⌘W" onClick={() => { onCloseAll?.(); close(); }} destructive isLight={isLight} />
+              <DropItem
+                label="Show All Windows"
+                disabled={!windows.some((w) => w.isOpen && w.isMinimized)}
+                onClick={() => { onShowAllWindows?.(); close(); }}
+                isLight={isLight}
+              />
               <Divider isLight={isLight} />
-              <SectionLabel label="Open" isLight={isLight} />
-              <DropItem label="Projects" shortcut="⌘1" onClick={() => { onOpenApp?.('projects'); close(); }} isLight={isLight} />
-              <DropItem label="AIssistant" shortcut="⌘2" onClick={() => { onOpenApp?.('chat'); close(); }} isLight={isLight} />
-              <DropItem label="Browser" shortcut="⌘3" onClick={() => { onOpenApp?.('browser'); close(); }} isLight={isLight} />
-              <DropItem label="Messages" shortcut="⌘4" onClick={() => { onOpenApp?.('messages'); close(); }} isLight={isLight} />
-              <DropItem label="Video Call" shortcut="⎈5" onClick={() => { onOpenApp?.('videocall'); close(); }} isLight={isLight} />
-              <DropItem label="My Story" shortcut="⎈6" onClick={() => { onOpenApp?.('mystory'); close(); }} isLight={isLight} />
+              {windowRows.length === 0 ? (
+                <DropItem label="No open windows" disabled isLight={isLight} />
+              ) : (
+                windowRows.map((row) => (
+                  <DropItem
+                    key={row.id}
+                    label={row.label}
+                    mark={row.mark}
+                    ariaLabel={row.ariaLabel}
+                    onClick={() => { onActivateWindow?.(row.id); close(); }}
+                    isLight={isLight}
+                  />
+                ))
+              )}
+              <Divider isLight={isLight} />
+              <DropItem
+                label="Close All"
+                destructive
+                disabled={windowRows.length === 0}
+                onClick={() => { onCloseAll?.(); close(); }}
+                isLight={isLight}
+              />
             </Dropdown>
           )}
         </AnimatePresence>
@@ -423,16 +469,6 @@ export default function MenuBar({
 
       {/* ── Right: system icons + date/time ── */}
       <div className="flex items-center gap-3 h-full">
-        {/* Spotlight */}
-        <button
-          style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer', opacity: 0.65, display: 'flex', alignItems: 'center' }}
-          onClick={() => {}}
-        >
-          <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-            <circle cx="5.5" cy="5.5" r="4" stroke={isLight ? '#1C1410' : 'white'} strokeWidth="1.4" />
-            <line x1="8.5" y1="8.5" x2="12" y2="12" stroke={isLight ? '#1C1410' : 'white'} strokeWidth="1.4" strokeLinecap="round" />
-          </svg>
-        </button>
         {/* Control center dots */}
         <button
           style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer', opacity: 0.65, display: 'flex', alignItems: 'center' }}
@@ -722,18 +758,27 @@ function Dropdown({
 
 function DropItem({
   label,
-  shortcut,
+  trailing,
   onClick,
   disabled,
   checked,
+  mark,
+  ariaLabel,
   destructive,
   isLight,
 }: {
   label: string;
-  shortcut?: string;
+  /** A glyph at the right edge (an external-link arrow, an envelope). Not a keyboard shortcut. */
+  trailing?: string;
   onClick?: () => void;
   disabled?: boolean;
+  /** A checkmark column for a chosen option (the wallpaper and accent lists). */
   checked?: boolean;
+  /** A decorative mark in the same column: the Window menu's check (front) and diamond (minimized).
+   *  Pass '' for an unmarked row so the labels still line up. */
+  mark?: string;
+  /** The accessible name when it needs to say more than the label (the state a mark shows). */
+  ariaLabel?: string;
   destructive?: boolean;
   isLight?: boolean;
 }) {
@@ -743,6 +788,8 @@ function DropItem({
   return (
     <button
       onClick={disabled ? undefined : onClick}
+      aria-label={ariaLabel}
+      aria-disabled={disabled || undefined}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{
@@ -769,14 +816,17 @@ function DropItem({
       }}
     >
       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        {checked !== undefined && (
-          <span style={{ width: 12, fontSize: 11, color: checked ? 'var(--pk-accent)' : 'transparent' }}>✓</span>
+        {(checked !== undefined || mark !== undefined) && (
+          // The accent-coloured mark would be accent on accent under the hover background, i.e. invisible.
+          <span aria-hidden style={{ width: 12, fontSize: 11, color: (mark ?? checked) ? (hov && !disabled ? '#fff' : 'var(--pk-accent)') : 'transparent' }}>
+            {mark ?? '✓'}
+          </span>
         )}
         {label}
       </span>
-      {shortcut && (
-        <span style={{ fontFamily: 'monospace', fontSize: 10, color: hov ? 'rgba(255,255,255,0.55)' : (isLight ? 'rgba(28,20,16,0.28)' : 'rgba(255,255,255,0.28)'), flexShrink: 0 }}>
-          {shortcut}
+      {trailing && (
+        <span aria-hidden style={{ fontFamily: 'monospace', fontSize: 10, color: hov ? 'rgba(255,255,255,0.55)' : (isLight ? 'rgba(28,20,16,0.28)' : 'rgba(255,255,255,0.28)'), flexShrink: 0 }}>
+          {trailing}
         </span>
       )}
     </button>

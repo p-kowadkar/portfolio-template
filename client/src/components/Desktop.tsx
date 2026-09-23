@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { AnimatePresence } from 'framer-motion';
 import type { WindowManager } from '../hooks/useWindowManager';
 import { areaOf, getViewport } from '../lib/windowState';
+import { closeAllOrder } from '../lib/windowMenu';
 import MenuBar from './MenuBar';
 import Dock from './Dock';
 import Window from './Window';
@@ -40,8 +41,9 @@ const appComponents: Record<string, React.ReactNode> = {
 
 export default function Desktop({ windowManager }: DesktopProps) {
   const {
-    windows, openWindow, closeWindow, cancelClose, minimizeWindow, maximizeWindow, focusWindow, setWindowCompact,
-    setWindowGeometry, clampWindowsToViewport, setWindowPolicy, resetWindowRuntime,
+    windows, openWindow, activateWindow, showAllWindows, closeWindow, cancelClose, minimizeWindow, maximizeWindow,
+    focusWindow, setWindowCompact, setWindowGeometry, clampWindowsToViewport, setWindowPolicy, resetWindowRuntime,
+    frontWindowId,
   } = windowManager;
   const [desktopClicked, setDesktopClicked] = useState(false);
 
@@ -82,10 +84,6 @@ export default function Desktop({ windowManager }: DesktopProps) {
     if (import.meta.env.DEV) (window as unknown as { __wm?: WindowManager }).__wm = windowManager;
   }, [windowManager]);
 
-  const activeWindow = [...windows]
-    .filter((w) => w.isOpen && !w.isMinimized)
-    .sort((a, b) => b.zIndex - a.zIndex)[0];
-
   return (
     <WindowParamsProvider windows={windows}>
     <WindowActionsProvider openWindow={openWindow} setWindowCompact={setWindowCompact} setWindowPolicy={setWindowPolicy}>
@@ -113,11 +111,18 @@ export default function Desktop({ windowManager }: DesktopProps) {
 
       {/* Menu bar */}
       <MenuBar
-        activeApp={activeWindow?.id || null}
-        onOpenApp={openWindow}
+        activeApp={frontWindowId}
+        windows={windows}
+        // Menu items that open an app mean what a Dock click means (open / restore / expand / focus).
+        onOpenApp={activateWindow}
+        onActivateWindow={activateWindow}
+        onMinimizeWindow={minimizeWindow}
+        onZoomWindow={maximizeWindow}
         onMinimizeAll={() => windows.forEach((w) => w.isOpen && !w.isMinimized && minimizeWindow(w.id))}
-        onCloseAll={() => windows.forEach((w) => w.isOpen && closeWindow(w.id))}
-        onBringAllToFront={() => windows.forEach((w) => w.isOpen && !w.isMinimized && focusWindow(w.id))}
+        onShowAllWindows={showAllWindows}
+        // Unguarded windows close first and the guarded one (a live call) last, so its "End Call?"
+        // sheet is what is left on top; each close is independent, so none disturbs another's request.
+        onCloseAll={() => closeAllOrder(windows).forEach((id) => closeWindow(id))}
       />
 
       {/* Desktop area (between menubar and dock) */}
@@ -156,7 +161,7 @@ export default function Desktop({ windowManager }: DesktopProps) {
                 // Window has always styled unfocused chrome (gray traffic lights, lighter
                 // shadow) but was never told which window is focused, so every window
                 // looked focused.
-                isFocused={win.id === activeWindow?.id}
+                isFocused={win.id === frontWindowId}
               >
                 {appComponents[win.id]}
               </Window>
