@@ -1,7 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   getViewport, bringToFront, openWindowIn, restoreWindowIn, closeWindowIn, cancelCloseIn, minimizeWindowIn,
   maximizeWindowIn, setCompactIn, setGeometryIn, setPolicyIn, resetRuntimeIn, clampAllIn,
+  activateWindowIn, showAllWindowsIn, getFrontWindow,
   type WindowLike, type Point, type Size, type MinimizeMode, type CloseGuard,
 } from '../lib/windowState';
 
@@ -185,6 +186,13 @@ export interface WindowManager {
   openWindow: (id: string, params?: Record<string, unknown>) => void;
   /** Un-minimize a window (no params) and bring it to the front. */
   restoreWindow: (id: string) => void;
+  /** What a Dock or menu click means: open it if closed, restore it if minimized, expand it if it is a
+   *  bubble, otherwise focus it. (Tool calls keep using openWindow, which never touches a bubble.) */
+  activateWindow: (id: string) => void;
+  /** Show All Windows: restore every minimized window, leaving the z-order as it is. */
+  showAllWindows: () => void;
+  /** The window the visitor is working in (top z among visible, non-bubble windows), or null. */
+  frontWindowId: string | null;
   /** Close (quit) a window. A window with a closeGuard raises its confirm sheet instead, unless
    *  `force` is set (only the sheet's confirm button passes it). */
   closeWindow: (id: string, force?: boolean) => void;
@@ -221,6 +229,16 @@ export function useWindowManager(): WindowManager {
   const restoreWindow = useCallback((id: string) => {
     setWindows((prev) => restoreWindowIn(prev, id, getViewport()));
   }, []);
+
+  const activateWindow = useCallback((id: string) => {
+    setWindows((prev) => activateWindowIn(prev, id, getViewport()));
+  }, []);
+
+  const showAllWindows = useCallback(() => {
+    setWindows((prev) => showAllWindowsIn(prev, getViewport()));
+  }, []);
+
+  const frontWindowId = useMemo(() => getFrontWindow(windows)?.id ?? null, [windows]);
 
   const closeWindow = useCallback((id: string, force = false) => {
     setWindows((prev) => closeWindowIn(prev, id, force));
@@ -265,7 +283,8 @@ export function useWindowManager(): WindowManager {
   }, []);
 
   return {
-    windows, openWindow, restoreWindow, closeWindow, cancelClose, minimizeWindow, maximizeWindow,
-    focusWindow, setWindowCompact, setWindowGeometry, clampWindowsToViewport, setWindowPolicy, resetWindowRuntime,
+    windows, openWindow, restoreWindow, activateWindow, showAllWindows, frontWindowId, closeWindow, cancelClose,
+    minimizeWindow, maximizeWindow, focusWindow, setWindowCompact, setWindowGeometry, clampWindowsToViewport,
+    setWindowPolicy, resetWindowRuntime,
   };
 }

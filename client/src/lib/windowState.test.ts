@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MIN_H, MIN_W, areaOf, bringToFront, cancelCloseIn, clampAllIn, clampFrame, closeWindowIn, initialFrame,
-  maximizeWindowIn, minimizeWindowIn, openWindowIn, resetRuntimeIn, restoreWindowIn, setCompactIn,
-  setGeometryIn, setPolicyIn,
+  MIN_H, MIN_W, activateWindowIn, areaOf, bringToFront, canMinimize, canZoom, cancelCloseIn, clampAllIn,
+  clampFrame, closeWindowIn, getFrontWindow, initialFrame, maximizeWindowIn, minimizeWindowIn, openWindowIn,
+  resetRuntimeIn, restoreWindowIn, restoredState, setCompactIn, setGeometryIn, setPolicyIn, showAllWindowsIn,
   type CloseGuard, type Frame, type Viewport, type WindowLike,
 } from './windowState';
 
@@ -443,5 +443,132 @@ describe('clampAllIn', () => {
     const out = clampAllIn([fits, off], VP);
     expect(out[0]).toBe(fits);
     expect(out[1]).not.toBe(off);
+  });
+});
+
+describe('restoredState', () => {
+  it('un-minimizes and pulls the frame inside the CURRENT area (the browser may have shrunk while it was hidden)', () => {
+    const w = open({ isMinimized: true, position: { x: 1300, y: 700 }, size: { width: 600, height: 400 } });
+    const out = restoredState(w, { width: 1000, height: 700 });
+    expect(out.isMinimized).toBe(false);
+    expect(out.position).toEqual({ x: 400, y: 200 });
+  });
+  it('keeps maximized, params and everything else it was not asked to change', () => {
+    const w = open({ isMinimized: true, isMaximized: true, params: { p: 1 } });
+    expect(restoredState(w, VP)).toMatchObject({ isMaximized: true, params: { p: 1 }, isOpen: true });
+  });
+});
+
+describe('getFrontWindow', () => {
+  const z = (id: string, zIndex: number, over: Partial<WindowLike> = {}) => open({ id, zIndex, ...over });
+  it('is the visible window with the highest z', () => {
+    expect(getFrontWindow([z('a', 10), z('b', 12), z('c', 11)])?.id).toBe('b');
+  });
+  it('ignores closed and minimized windows, however high their z', () => {
+    const ws = [z('a', 10), z('b', 99, { isMinimized: true }), win({ id: 'c', zIndex: 98 })];
+    expect(getFrontWindow(ws)?.id).toBe('a');
+  });
+  it('ignores a bubble while any full window is visible: a bubble is raised on every shrink but is not what the visitor is working in', () => {
+    const ws = [z('canvas', 12), z('call', 13, { isCompact: true })];
+    expect(getFrontWindow(ws)?.id).toBe('canvas');
+  });
+  it('falls back to a lone bubble when nothing else is visible', () => {
+    expect(getFrontWindow([z('call', 13, { isCompact: true }), z('t', 11, { isMinimized: true })])?.id).toBe('call');
+  });
+  it('is undefined when nothing is visible', () => {
+    expect(getFrontWindow([win(), z('m', 10, { isMinimized: true })])).toBeUndefined();
+    expect(getFrontWindow([])).toBeUndefined();
+  });
+});
+
+describe('showAllWindowsIn', () => {
+  it('restores every minimized window, clamps each frame, and leaves the z-order alone', () => {
+    const ws = [
+      open({ id: 'a', zIndex: 12, isMinimized: true, position: { x: 1300, y: 700 } }),
+      open({ id: 'b', zIndex: 15 }),
+      open({ id: 'c', zIndex: 11, isMinimized: true }),
+    ];
+    const out = showAllWindowsIn(ws, { width: 1000, height: 700 });
+    expect(out.map((w) => w.isMinimized)).toEqual([false, false, false]);
+    expect(out.map((w) => w.zIndex)).toEqual([12, 15, 11]);
+    expect(out[0].position).toEqual({ x: 400, y: 200 }); // pulled inside the smaller area
+  });
+  it('never opens a closed window', () => {
+    const ws = [win({ id: 'closed' }), open({ id: 'm', isMinimized: true })];
+    const out = showAllWindowsIn(ws, VP);
+    expect(out[0].isOpen).toBe(false);
+    expect(out[1].isMinimized).toBe(false);
+  });
+  it('returns the SAME array when nothing is minimized', () => {
+    const ws = [open({ id: 'a' }), open({ id: 'b', isCompact: true })];
+    expect(showAllWindowsIn(ws, VP)).toBe(ws);
+  });
+});
+
+describe('activateWindowIn (what a Dock or menu click means)', () => {
+  it('opens a closed window', () => {
+    const [w] = activateWindowIn([win()], 'a', VP);
+    expect(w).toMatchObject({ isOpen: true, isMinimized: false });
+  });
+  it('restores a minimized window and brings it to the front', () => {
+    const ws = [open({ id: 'a', isMinimized: true, zIndex: 10 }), open({ id: 'b', zIndex: 12 })];
+    const out = activateWindowIn(ws, 'a', VP);
+    expect(out[0].isMinimized).toBe(false);
+    expect(out[0].zIndex).toBeGreaterThan(12);
+  });
+  it('expands a bubble and raises it (the call comes back to full size when its Dock icon is clicked)', () => {
+    const ws = [open({ id: 'call', isCompact: true, zIndex: 11 }), open({ id: 'canvas', zIndex: 12 })];
+    const out = activateWindowIn(ws, 'call', VP);
+    expect(out[0].isCompact).toBe(false);
+    expect(out[0].zIndex).toBeGreaterThan(12);
+  });
+  it('focuses a window that is already visible, touching nothing else', () => {
+    const ws = [open({ id: 'a', zIndex: 10 }), open({ id: 'b', zIndex: 12 })];
+    const out = activateWindowIn(ws, 'a', VP);
+    expect(out[0].zIndex).toBeGreaterThan(12);
+    expect(out[0]).toMatchObject({ isMinimized: false, isCompact: false });
+  });
+  it('returns the same array for an unknown id, and for the window that is already in front', () => {
+    const ws = [open({ id: 'a', zIndex: 10 }), open({ id: 'b', zIndex: 12 })];
+    expect(activateWindowIn(ws, 'nope', VP)).toBe(ws);
+    expect(activateWindowIn(ws, 'b', VP)).toBe(ws);
+  });
+});
+
+describe('canMinimize / canZoom (what a menu item may promise)', () => {
+  const guard: CloseGuard = { title: 'End Call?', body: 'b', confirmLabel: 'End Call' };
+  it('canMinimize: yes for an ordinary visible window', () => {
+    expect(canMinimize(open())).toBe(true);
+  });
+  it('canMinimize: no for nothing, a closed window, a hidden one, or one with its close sheet up', () => {
+    expect(canMinimize(undefined)).toBe(false);
+    expect(canMinimize(win())).toBe(false);
+    expect(canMinimize(open({ isMinimized: true }))).toBe(false);
+    expect(canMinimize(open({ closeGuard: guard, closeRequested: true }))).toBe(false);
+  });
+  it('canMinimize: a live call (compact mode) can still be shrunk, but not once it is already the bubble', () => {
+    expect(canMinimize(open({ minimizeMode: 'compact' }))).toBe(true);
+    expect(canMinimize(open({ minimizeMode: 'compact', isCompact: true }))).toBe(false);
+  });
+  it('canMinimize: an ordinary window that happens to be compact CAN be minimized (it hides)', () => {
+    expect(canMinimize(open({ isCompact: true }))).toBe(true);
+  });
+  it('canZoom: only a visible, full-size window', () => {
+    expect(canZoom(open())).toBe(true);
+    expect(canZoom(open({ isMaximized: true }))).toBe(true); // it un-zooms
+    expect(canZoom(undefined)).toBe(false);
+    expect(canZoom(win())).toBe(false);
+    expect(canZoom(open({ isMinimized: true }))).toBe(false);
+    expect(canZoom(open({ isCompact: true }))).toBe(false);
+  });
+  it('the reducers agree with the predicates for EVERY combination of flags (a menu item is enabled exactly when the click does something)', () => {
+    const bools = [false, true];
+    for (const isOpen of bools) for (const isMinimized of bools) for (const isCompact of bools)
+      for (const closeRequested of bools) for (const mode of ['hide', 'compact'] as const) {
+        const w = open({ isOpen, isMinimized, isCompact, closeRequested, minimizeMode: mode, closeGuard: closeRequested ? guard : null });
+        const ws = [w];
+        expect(minimizeWindowIn(ws, 'a') !== ws).toBe(canMinimize(w));
+        expect(maximizeWindowIn(ws, 'a') !== ws).toBe(canZoom(w));
+      }
   });
 });

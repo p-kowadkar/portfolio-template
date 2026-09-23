@@ -162,8 +162,7 @@ export function openWindowIn<W extends WindowLike>(
   } else if (w.isMinimized) {
     // Opening a minimized window IS a restore (tool calls like openWindow('canvas', {...})
     // rely on it). isMaximized is kept, so it comes back maximized like macOS.
-    const frame = clampFrame(frameOf(w, viewport), area);
-    next = { ...w, isMinimized: false, position: frame.position, size: frame.size, params: params ?? w.params };
+    next = { ...restoredState(w, viewport), params: params ?? w.params };
   } else {
     // Already visible: take the params, come to the front. Never touches isCompact, so a Dock
     // or tool-call open of a live bubble leaves it a bubble.
@@ -172,16 +171,52 @@ export function openWindowIn<W extends WindowLike>(
   return bringToFront(next === w ? windows : replace(windows, next), id);
 }
 
+/** A window coming back from minimized: visible again, its frame pulled inside the CURRENT area
+ *  (the browser may have been resized while it was hidden). Every un-minimize path -- opening a
+ *  minimized window, restoring it, Show All Windows -- maps through this one function, so none of
+ *  them can skip the clamp. */
+export function restoredState<W extends WindowLike>(w: W, viewport: Viewport): W {
+  const frame = clampFrame(frameOf(w, viewport), areaOf(viewport));
+  return { ...w, isMinimized: false, position: frame.position, size: frame.size };
+}
+
 /** Un-minimize (no params) and come to the front; a closed window is left alone. */
 export function restoreWindowIn<W extends WindowLike>(windows: W[], id: string, viewport: Viewport): W[] {
   const w = windows.find((x) => x.id === id);
   if (!w || !w.isOpen) return windows;
   if (!w.isMinimized) return bringToFront(windows, id);
-  const frame = clampFrame(frameOf(w, viewport), areaOf(viewport));
-  return bringToFront(
-    replace(windows, { ...w, isMinimized: false, position: frame.position, size: frame.size }),
-    id,
-  );
+  return bringToFront(replace(windows, restoredState(w, viewport)), id);
+}
+
+/** The window the visitor is working in: the visible window with the highest z, leaving out bubbles.
+ *  A bubble is raised on every shrink (so it keeps a sane z when it expands), which would make the
+ *  call "win" the z-order whenever it shrank beside Canvas or the Scheduler, and leave the window the
+ *  visitor was actually using looking unfocused. A bubble only counts when nothing else is visible.
+ *  Minimized and closed windows never count, so focus hands off to the next visible one. */
+export function getFrontWindow<W extends WindowLike>(windows: W[]): W | undefined {
+  const visible = windows.filter((w) => w.isOpen && !w.isMinimized);
+  const full = visible.filter((w) => !w.isCompact);
+  const pool = full.length ? full : visible;
+  return pool.reduce<W | undefined>((best, w) => (!best || w.zIndex > best.zIndex ? w : best), undefined);
+}
+
+/** Show All Windows: every minimized window comes back (frames clamped), and the z-order is left
+ *  exactly as it was (unlike "bring to front", which reorders everything by array position). */
+export function showAllWindowsIn<W extends WindowLike>(windows: W[], viewport: Viewport): W[] {
+  if (!windows.some((w) => w.isOpen && w.isMinimized)) return windows;
+  return windows.map((w) => (w.isOpen && w.isMinimized ? restoredState(w, viewport) : w));
+}
+
+/** What clicking a window's Dock icon (or its menu entry) means: closed -> open it; minimized ->
+ *  restore it; a bubble -> expand it (and raise it); otherwise just bring it to the front. Tool calls
+ *  keep using openWindow, which never touches a bubble. */
+export function activateWindowIn<W extends WindowLike>(windows: W[], id: string, viewport: Viewport): W[] {
+  const w = windows.find((x) => x.id === id);
+  if (!w) return windows;
+  if (!w.isOpen) return openWindowIn(windows, id, undefined, viewport);
+  if (w.isMinimized) return restoreWindowIn(windows, id, viewport);
+  if (w.isCompact) return setCompactIn(windows, id, false);
+  return bringToFront(windows, id);
 }
 
 const sameGuard = (a: CloseGuard | null, b: CloseGuard | null) =>
@@ -272,18 +307,30 @@ export function resetRuntimeIn<W extends WindowLike>(windows: W[], id: string): 
  *  window that is closed or already hidden. */
 export function minimizeWindowIn<W extends WindowLike>(windows: W[], id: string): W[] {
   const w = windows.find((x) => x.id === id);
-  if (!w || !w.isOpen || w.isMinimized || w.closeRequested) return windows;
-  if (w.minimizeMode === 'compact') {
-    return w.isCompact ? windows : replace(windows, { ...w, isCompact: true });
-  }
+  if (!w || !canMinimize(w)) return windows;
+  if (w.minimizeMode === 'compact') return replace(windows, { ...w, isCompact: true });
   return replace(windows, { ...w, isMinimized: true, isCompact: false });
 }
 
 /** Zoom toggle. Only a visible, full-size window can be zoomed; never writes the frame. */
 export function maximizeWindowIn<W extends WindowLike>(windows: W[], id: string): W[] {
   const w = windows.find((x) => x.id === id);
-  if (!w || !w.isOpen || w.isMinimized || w.isCompact) return windows;
+  if (!w || !canZoom(w)) return windows;
   return replace(windows, { ...w, isMaximized: !w.isMaximized });
+}
+
+/** Whether yellow would change anything for this window right now. minimizeWindowIn uses this very
+ *  predicate, and so does the Window menu to grey out "Minimize", so a menu item is enabled exactly
+ *  when its click does something (a lone call bubble, or a window with its close sheet up, ignore
+ *  it: the first is already as small as it gets, the second is mid-decision). */
+export function canMinimize(w: WindowLike | undefined): boolean {
+  if (!w || !w.isOpen || w.isMinimized || w.closeRequested) return false;
+  return !(w.minimizeMode === 'compact' && w.isCompact);
+}
+
+/** Whether the green light would change anything: only a visible, full-size window zooms. */
+export function canZoom(w: WindowLike | undefined): boolean {
+  return !!w && w.isOpen && !w.isMinimized && !w.isCompact;
 }
 
 /** Explicit direction, not a toggle. Compact and maximized are RENDER-TIME overrides of the
