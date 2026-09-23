@@ -50,18 +50,20 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   PhoneOff, Mic, MicOff, Volume2, VolumeX,
-  Send, Loader2, Subtitles, MessageSquareText, X,
+  Send, Loader2, Subtitles, MessageSquareText, X, Maximize2,
 } from 'lucide-react';
 import { CallCapReachedError, API_URL, speak } from '@/lib/callAudio';
-import { checkCallStart, reportCallEnd, GATE_TIMEOUT_MS, type BlockReason } from '@/lib/callGate';
+import { checkCallStart, reportCallEnd, GATE_TIMEOUT_MS, CALL_CAP_MS, CAP_MESSAGE, type BlockReason } from '@/lib/callGate';
 import { useSimliAvatar } from '@/hooks/useSimliAvatar';
 import { usePersistFn } from '@/hooks/usePersistFn';
 import { useCaptions, captionWindow } from '@/hooks/useCaptions';
 import { dispatchToolCall } from '@/lib/toolDispatch';
-import { useOpenWindow } from '@/contexts/WindowActionsContext';
+import { useWindowActions } from '@/contexts/WindowActionsContext';
+import { useIsWindowOpen, useIsWindowCompact, useWindowSelf } from '@/contexts/WindowParamsContext';
 import { useCallTeardown } from '@/hooks/useCallTeardown';
 import { useCallTimer } from '@/hooks/useCallTimer';
 import type { SREvent, SpeechRecognitionType, SpeechRecognitionConstructor } from '@/lib/speechRecognition';
+import type { CloseGuard } from '@/lib/windowState';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 // Replace with your own reference photo — see the setup note above.
@@ -72,6 +74,14 @@ const CONNECT_TIMEOUT_MS = 8000;
 // Floor so the connecting screen doesn't flash when Simli connects fast or the
 // kill-switch (no SIMLI_API_KEY) fails fast.
 const MIN_CONNECTING_MS = 1100;
+
+// What red asks while a call is live (see the policy effect in the component). A module-level
+// constant, not an object literal in the effect, so it is one value however often the effect runs.
+const CALL_CLOSE_GUARD: CloseGuard = {
+  title: 'End Call?',
+  body: 'Closing the window will end the current call.',
+  confirmLabel: 'End Call',
+};
 
 type Phase = 'ringing' | 'connecting' | 'active' | 'ended' | 'blocked';
 
@@ -92,17 +102,32 @@ export default function VideoCallApp() {
   const [soundOn, setSoundOn] = useState(true);
   const [transcript, setTranscript] = useState('');
   const [showTranscript, setShowTranscript] = useState(false);
+  // Compact bubble's own message-input row — collapsed by default, since the
+  // bubble is voice-first; a fallback for when mic permissions/hardware fail.
+  const [compactMessageOpen, setCompactMessageOpen] = useState(false);
+  // The call ended because it hit the time limit (client timer or the server's 429): the ended screen says so.
+  const [endedByCap, setEndedByCap] = useState(false);
 
   // Call-rate gate (2/day per visitor, monthly minutes budget) — 'pending' while
   // /api/call/start is in flight; the connecting-gate effect below waits on it.
   const [gate, setGate] = useState<'pending' | 'allowed' | 'blocked'>('pending');
   const [blockReason, setBlockReason] = useState<BlockReason | null>(null);
 
+  const { openWindow, setWindowCompact, setWindowPolicy } = useWindowActions();
+  // Running, not visible: still true while a minimized window is hidden, false the instant a close
+  // is confirmed (this context sits above the window's exit animation).
+  const windowOpen = useIsWindowOpen('videocall');
+  // Hidden but still running (a minimized window stays mounted): the ringtone must stay quiet.
+  const { isMinimized } = useWindowSelf();
+  // Whether THIS window (the call) is currently shrunk into its corner bubble --
+  // see handleToolCall (auto-shrink) and the restore button in the compact UI
+  // below (manual expand). Window.tsx reads the same isCompact flag to resize
+  // its own Rnd container; this is how the two stay in sync.
+  const compact = useIsWindowCompact('videocall');
   const callTimer = useCallTimer(phase === 'active', phase === 'ringing' || phase === 'connecting');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionType | null>(null);
-  const ringtoneRef = useRef<HTMLAudioElement | null>(null);
   const callSessionIdRef = useRef<string>('');
   // The in-flight /api/chat request -- aborted by call.teardownVoice() so a dead call
   // can't have its late reply spoken through a detached fallback Audio. See
@@ -110,12 +135,45 @@ export default function VideoCallApp() {
   const chatAbortRef = useRef<AbortController | null>(null);
   const avatar = useSimliAvatar({ onSpeakingChange: setSpeaking });
   const captions = useCaptions(speaking);
-  const openWindow = useOpenWindow();
   const connectStartedRef = useRef(0);
   const beganActiveRef = useRef(false);
   // true = nothing to report to /api/call/end (no server row exists for this call)
   const endReportedRef = useRef(true);
   const inCall = phase === 'connecting' || phase === 'active';
+
+  // The bubble is a live-call layout: it only makes sense while connecting or active. Any
+  // other phase inside it (ringing, blocked, ended) has no controls that fit, so expand.
+  // This makes the stuck "ringing screen in a bubble" state unreachable on every path,
+  // including 'blocked', which never cleared compact itself.
+  useEffect(() => {
+    if (compact && !inCall) setWindowCompact('videocall', false);
+  }, [compact, inCall]);
+
+  // The bubble's text row belongs to one trip into the bubble. Expanding (the Expand button, a
+  // double-click, a hangup) leaves this component mounted, so without this the row would still be
+  // open, and its autoFocus would grab the keyboard, the next time the call becomes a bubble.
+  useEffect(() => {
+    if (!compact) setCompactMessageOpen(false);
+  }, [compact]);
+
+  // While a call is live this is not an ordinary window: yellow shrinks it into the corner bubble
+  // (audio and video keep running) instead of hiding it, and red asks before hanging up. Keyed on
+  // `inCall`, so every way a call can stop (End, decline while connecting, blocked, cap, unmount)
+  // clears the policy by construction. A window that is closed for real also resets it in the manager.
+  useEffect(() => {
+    if (!inCall) return;
+    setWindowPolicy('videocall', { minimizeMode: 'compact', closeGuard: CALL_CLOSE_GUARD });
+    return () => setWindowPolicy('videocall', { minimizeMode: 'hide', closeGuard: null });
+  }, [inCall, setWindowPolicy]);
+
+  // Confirming "End Call?" closes the window, but this component stays mounted through the exit
+  // animation and can even be revived if the visitor reopens the window inside it. End the call at
+  // the moment of the close, not at unmount: the audio stops now, the accounting is reported now,
+  // and a revived window shows "Call ended" instead of a dead call that still looks live. Every
+  // close of a live call goes through the confirm sheet, so this only fires for a confirmed End.
+  useEffect(() => {
+    if (!windowOpen && inCall) endCall();
+  }, [windowOpen, inCall]);
 
   // The one shared teardown for the voice pipeline -- every exit path (End, blocked,
   // cap-reached, and unmount) runs through call.teardownVoice() instead of hand-rolling
@@ -180,45 +238,51 @@ export default function VideoCallApp() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  // Ringtone (use the existing boot sound as a placeholder ring)
+  // Ringtone: a soft pulsing oscillator while the incoming-call screen is showing. Quiet while the
+  // window is minimized (hidden but still mounted) and back on restore. This effect's cleanup is the
+  // ONLY thing that stops it. acceptCall and endCall used to call a separate pause() as well, which
+  // closed the AudioContext a second time from here: an uncaught "Cannot close a closed
+  // AudioContext" rejection on every call.
   useEffect(() => {
-    if (phase !== 'ringing') return;
-    // Subtle pulsing ring tone using oscillator
+    if (phase !== 'ringing' || isMinimized) return;
+    let ctx: AudioContext | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const ctx = new AudioContext();
-      let stopped = false;
+      const c = (ctx = new AudioContext());
       const ring = () => {
-        if (stopped) return;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+        const osc = c.createOscillator();
+        const gain = c.createGain();
         osc.connect(gain);
-        gain.connect(ctx.destination);
+        gain.connect(c.destination);
         osc.frequency.value = 440;
         osc.type = 'sine';
-        gain.gain.setValueAtTime(0, ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.05);
-        gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.4);
-        setTimeout(ring, 2000);
+        gain.gain.setValueAtTime(0, c.currentTime);
+        gain.gain.linearRampToValueAtTime(0.15, c.currentTime + 0.05);
+        gain.gain.linearRampToValueAtTime(0, c.currentTime + 0.4);
+        osc.start(c.currentTime);
+        osc.stop(c.currentTime + 0.4);
+        timer = setTimeout(ring, 2000);
       };
       ring();
-      ringtoneRef.current = { pause: () => { stopped = true; ctx.close(); } } as unknown as HTMLAudioElement;
-    } catch (_) {}
-    return () => { (ringtoneRef.current as any)?.pause?.(); };
-  }, [phase]);
+    } catch { /* no Web Audio here: ring silently */ }
+    return () => {
+      clearTimeout(timer);
+      ctx?.close().catch(() => {});
+    };
+  }, [phase, isMinimized]);
 
   // Accept call — the video/audio elements are always mounted now (base layer below),
   // so start() can run immediately instead of waiting for the 'active' phase to exist.
   const acceptCall = () => {
-    (ringtoneRef.current as any)?.pause?.();
     const sessionId = crypto.randomUUID();
     callSessionIdRef.current = sessionId;
     beganActiveRef.current = false;
     endReportedRef.current = false; // a server row may exist from here on
     connectStartedRef.current = Date.now();
     call.beginCall();
+    call.scheduleCapHangup(handleCapReached, CALL_CAP_MS); // cleared by every teardown path
     setGate('pending');
+    setEndedByCap(false);
     setBlockReason(null);
     avatar.prefetchToken(sessionId);
     avatar.start(sessionId);
@@ -265,11 +329,13 @@ export default function VideoCallApp() {
     }
   });
 
-  // Decline / end call
+  // Decline / end call — also restores from the compact bubble, if it was open, so the
+  // ended/blocked screens always render at full size.
   const endCall = () => {
-    (ringtoneRef.current as any)?.pause?.();
     call.teardownVoice();
     captions.clearCaption();
+    setCompactMessageOpen(false);
+    setWindowCompact('videocall', false);
     setPhase('ended');
   };
 
@@ -279,14 +345,14 @@ export default function VideoCallApp() {
   const handleCapReached = usePersistFn(() => {
     if (!call.isLive()) return;
     call.teardownVoice(); // clears any stale cap timer too, so the hangup below is the only one
-    setSpeaking(false);
-    const capMsg: Message = {
-      role: 'pk',
-      content: "We've hit the time limit for this call — let's keep going over email: pk.kowadkar@gmail.com!",
-      ts: Date.now(),
-    };
+    const capMsg: Message = { role: 'pk', content: CAP_MESSAGE, ts: Date.now() };
     setMessages(prev => [...prev, capMsg]);
+    setEndedByCap(true);
+    // A call parked in the bubble is the one this fires for, and the bubble has no caption strip:
+    // open the window up (setWindowCompact raises it too) so the notice is actually seen.
+    setWindowCompact('videocall', false);
     captions.showCaption(capMsg.content);
+    setSpeaking(false);
     call.scheduleCapHangup(endCall, 2500);
   });
 
@@ -387,9 +453,21 @@ export default function VideoCallApp() {
         if (!call.isLive() || controller.signal.aborted) return;
         reply = data.reply;
         if (data.tool_call) {
+          // openCanvas/openScheduler also shrink this call into its corner bubble -- "keep
+          // talking while I show you something" is the whole point of those two tool calls, so
+          // the content window should get the main area instead of fighting the call window for
+          // screen space. openApp is deliberately excluded -- that reads more like "go look at
+          // this yourself" than "keep narrating while I show you", so it opens as an ordinary
+          // window alongside the still-full-size call, same as before this feature existed.
           dispatchToolCall(data.tool_call, {
-            openCanvas: (project) => openWindow('canvas', { project }),
-            openScheduler: () => openWindow('scheduler'),
+            openCanvas: (project) => {
+              openWindow('canvas', { project });
+              setWindowCompact('videocall', true);
+            },
+            openScheduler: () => {
+              openWindow('scheduler');
+              setWindowCompact('videocall', true);
+            },
             openApp: (appId) => openWindow(appId),
           });
         }
@@ -463,11 +541,17 @@ export default function VideoCallApp() {
     else startListening();
   };
 
+  const stopDoubleClick = (e: React.MouseEvent) => e.stopPropagation();
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div
       className="relative w-full h-full overflow-hidden flex items-center justify-center"
       style={{ background: '#000' }}
+      // The bubble can't be dragged or resized, so double-clicking its face is the quick way back to
+      // full size (the Expand button is the keyboard path). Its input row and buttons stop the event
+      // (stopDoubleClick), so selecting a word or double-tapping the mic doesn't also expand it.
+      onDoubleClick={compact ? () => setWindowCompact('videocall', false) : undefined}
     >
       {/* ── REMOTE FEED (always mounted) ── your portrait as a permanent underlay;
           Simli's <video>/<audio> crossfade on top once the avatar connects. Always
@@ -648,27 +732,163 @@ export default function VideoCallApp() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 flex flex-col items-center justify-center gap-6 z-20"
+            className={`absolute inset-0 flex flex-col items-center justify-center z-20 ${compact ? 'gap-2.5' : 'gap-6'}`}
             style={{ background: '#000' }}
           >
+            {/* Same elements at any size (no remount when the window becomes the bubble): only the
+                measurements change, so the whole thing fits the 240x200 bubble. */}
             <motion.div
               className="rounded-full overflow-hidden"
-              style={{ width: '100px', height: '100px', border: '2px solid rgba(255,255,255,0.15)' }}
+              style={{ width: compact ? '56px' : '100px', height: compact ? '56px' : '100px', border: '2px solid rgba(255,255,255,0.15)' }}
               animate={{ opacity: [0.6, 1, 0.6] }}
               transition={{ duration: 1.2, repeat: Infinity }}
             >
               <img src={ANIME_PORTRAIT} alt="Pranav" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 10%' }} />
             </motion.div>
-            <p style={{ fontFamily: "'DM Mono', monospace", fontSize: '12px', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em' }}>
+            <p style={{ fontFamily: "'DM Mono', monospace", fontSize: compact ? '10px' : '12px', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em' }}>
               CONNECTING...
             </p>
+            <button
+              onClick={endCall}
+              aria-label="Cancel"
+              style={{
+                marginTop: compact ? 0 : '4px', padding: compact ? '5px 14px' : '8px 20px', borderRadius: '20px',
+                background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)',
+                color: 'rgba(255,255,255,0.6)', fontFamily: "'Outfit', sans-serif", fontSize: compact ? '11px' : '12px',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* ── ACTIVE CALL ── */}
       <AnimatePresence>
-        {phase === 'active' && (
+        {phase === 'active' && (compact ? (
+          <motion.div
+            key="active-compact"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ duration: 0.18 }}
+            className="absolute inset-0 z-10 flex flex-col justify-end"
+          >
+            {/* Speaking indicator, top-left */}
+            <div className="absolute top-2 left-2 flex items-center gap-1.5" style={{ padding: '3px 8px', borderRadius: '10px', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)' }}>
+              <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#34c759', flexShrink: 0 }} />
+              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: '9px', color: 'rgba(255,255,255,0.7)', letterSpacing: '0.04em' }}>
+                {speaking ? 'speaking' : callTimer}
+              </span>
+            </div>
+
+            {/* Message row — collapsed by default; voice-first, this is the fallback
+                for when mic permissions/hardware fail. */}
+            <AnimatePresence>
+              {compactMessageOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 6 }}
+                  className="px-2 pb-1.5"
+                  onDoubleClick={stopDoubleClick}
+                >
+                  <div
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full"
+                    style={{ background: 'rgba(255,255,255,0.14)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.15)' }}
+                  >
+                    <input
+                      autoFocus
+                      value={input}
+                      onChange={e => setInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          if (input.trim()) { sendMessage(input); setCompactMessageOpen(false); }
+                        }
+                      }}
+                      placeholder="Type a message..."
+                      disabled={loading}
+                      style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: '#f0f0f2', fontSize: '11px', fontFamily: "'Outfit', sans-serif" }}
+                    />
+                    <button
+                      onClick={() => { if (input.trim()) { sendMessage(input); setCompactMessageOpen(false); } }}
+                      disabled={loading || !input.trim()}
+                      aria-label="Send message"
+                      style={{
+                        width: '20px', height: '20px', borderRadius: '50%', border: 'none', flexShrink: 0,
+                        background: input.trim() && !loading ? '#E50914' : 'rgba(255,255,255,0.15)',
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                    >
+                      <Send size={10} color="white" />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Control strip */}
+            <div
+              className="flex items-center justify-center gap-2 px-2 pb-2.5 pt-2"
+              style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%)' }}
+              onDoubleClick={stopDoubleClick}
+            >
+              <button
+                onClick={toggleMic}
+                disabled={loading}
+                aria-label={micOn ? 'Stop voice input' : 'Start voice input'}
+                title={micOn ? 'Stop voice input' : 'Start voice input'}
+                style={{
+                  width: '30px', height: '30px', borderRadius: '50%', border: 'none', flexShrink: 0,
+                  background: micOn ? '#ff3b30' : 'rgba(255,255,255,0.15)',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: micOn ? '0 0 14px rgba(255,59,48,0.5)' : 'none',
+                }}
+              >
+                {micOn ? <Mic size={13} color="white" /> : <MicOff size={13} color="rgba(255,255,255,0.8)" />}
+              </button>
+              <button
+                onClick={() => setCompactMessageOpen(v => !v)}
+                aria-label={compactMessageOpen ? 'Hide text input' : 'Type a message'}
+                title={compactMessageOpen ? 'Hide text input' : 'Type a message'}
+                style={{
+                  width: '30px', height: '30px', borderRadius: '50%', border: 'none', flexShrink: 0,
+                  background: compactMessageOpen ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <MessageSquareText size={13} color="white" />
+              </button>
+              <button
+                onClick={endCall}
+                aria-label="End call"
+                title="End call"
+                style={{
+                  width: '30px', height: '30px', borderRadius: '50%', border: 'none', flexShrink: 0,
+                  background: '#ff3b30', boxShadow: '0 3px 12px rgba(255,59,48,0.4)',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <PhoneOff size={13} color="white" />
+              </button>
+              <button
+                onClick={() => setWindowCompact('videocall', false)}
+                aria-label="Expand call"
+                title="Expand"
+                style={{
+                  width: '30px', height: '30px', borderRadius: '50%', border: 'none', flexShrink: 0,
+                  background: 'rgba(255,255,255,0.15)',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Maximize2 size={12} color="white" />
+              </button>
+            </div>
+          </motion.div>
+        ) : (
           <motion.div
             key="active"
             initial={{ opacity: 0 }}
@@ -982,7 +1202,7 @@ export default function VideoCallApp() {
               )}
             </AnimatePresence>
           </motion.div>
-        )}
+        ))}
       </AnimatePresence>
 
       {/* ── CALL ENDED ── */}
@@ -1009,9 +1229,14 @@ export default function VideoCallApp() {
               <p style={{ fontFamily: "'DM Mono', monospace", fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginTop: '6px', letterSpacing: '0.05em' }}>
                 {callTimer}
               </p>
+              {endedByCap && (
+                <p style={{ fontFamily: "'Outfit', sans-serif", fontSize: '13px', color: 'rgba(255,255,255,0.4)', marginTop: '12px', lineHeight: 1.5, maxWidth: '320px' }}>
+                  {CAP_MESSAGE}
+                </p>
+              )}
             </div>
             <button
-              onClick={() => { setPhase('ringing'); setMessages([]); }}
+              onClick={() => { setPhase('ringing'); setMessages([]); setEndedByCap(false); }}
               style={{
                 padding: '10px 24px', borderRadius: '24px',
                 background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)',

@@ -38,6 +38,11 @@ export function useIsWindowVisible(windowId: string): boolean {
   return !!w && w.isOpen && !w.isMinimized;
 }
 
+export function useIsWindowCompact(windowId: string): boolean {
+  const windows = useContext(WindowParamsContext);
+  return windows.find((w) => w.id === windowId)?.isCompact ?? false;
+}
+
 /**
  * WindowSelfContext -- what an app can ask about ITS OWN window, without knowing its id or
  * subscribing to the whole windows array. Provided per window by Window.tsx and memoized, so an
