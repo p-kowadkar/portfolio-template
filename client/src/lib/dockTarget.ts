@@ -42,6 +42,22 @@ export function dockTargetFor(iconRect: { left: number; width: number } | null, 
   };
 }
 
+/** The translate that moves a window's visual centre onto `target`, for the minimize animation.
+ *  `rect` is the window's ROOT element in viewport coordinates (a CSS transform on a child does not
+ *  change the root's rect, so it can be measured while the inner element is mid-animation), and
+ *  `target` is getDockTarget's point in the same space. The inner element scales about its centre
+ *  (the default transform-origin), and scaling about the centre leaves the centre where it is, so a
+ *  plain translate by (target - centre) puts the centre on the target at any scale. */
+export function translateToward(
+  rect: { left: number; top: number; width: number; height: number },
+  target: Point,
+): Point {
+  return {
+    x: target.x - (rect.left + rect.width / 2),
+    y: target.y - (rect.top + rect.height / 2),
+  };
+}
+
 export function getDockTarget(id: string): Point {
   const el =
     typeof document !== 'undefined'

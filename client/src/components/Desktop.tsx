@@ -138,7 +138,10 @@ export default function Desktop({ windowManager }: DesktopProps) {
         {/* Windows */}
         <AnimatePresence>
           {windows.map((win) =>
-            win.isOpen && !win.isMinimized ? (
+            // Every OPEN window stays mounted, minimized ones included: minimize hides the window (see
+            // Window.tsx) instead of unmounting the app, so its state, requests and iframes survive.
+            // Only closing unmounts.
+            win.isOpen ? (
               <Window
                 key={win.id}
                 {...win}

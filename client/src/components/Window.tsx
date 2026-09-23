@@ -12,12 +12,13 @@
  *  - Window shadow: deep drop shadow when focused, lighter when not
  */
 
-import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Rnd } from 'react-rnd';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { WindowState, WindowManager } from '../hooks/useWindowManager';
 import { WindowSelfProvider } from '../contexts/WindowParamsContext';
 import { MENUBAR_H, MIN_W, MIN_H, getViewport, initialFrame, type Area, type CloseGuard, type Frame } from '../lib/windowState';
+import { getDockTarget, translateToward } from '../lib/dockTarget';
 
 interface WindowProps extends WindowState {
   onClose: WindowManager['closeWindow'];
@@ -46,6 +47,24 @@ interface WindowProps extends WindowState {
 const COMPACT_WIDTH = 240;
 const COMPACT_HEIGHT = 200;
 
+// ── Minimize: the window flies into its Dock icon ───────────────────────────────────────────────
+// Only the INNER motion.div moves; the Rnd root (which react-rnd positions with its own transform and
+// derives its drag offsets from) is never animated. The flight is a translate of the window's centre onto
+// the icon's centre plus a scale about the centre, which keeps that centre fixed at any scale (see
+// translateToward in lib/dockTarget.ts). Scale stops at 0.05, not 0: a zero scale is a singular matrix.
+type Fly = { dx: number; dy: number; reduce: boolean };
+const ENTER_FROM = { x: 0, y: 8, scale: 0.95, opacity: 0 }; // x is here so its motion value exists from mount
+const NORMAL = { x: 0, y: 0, scale: 1, opacity: 1 };
+const EXIT = { scale: 0.95, opacity: 0, y: 8 };
+const restorePose = (reduce: boolean) => ({
+  ...NORMAL,
+  transition: reduce ? { duration: 0.15, ease: 'linear' as const } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] as const },
+});
+const minimizedPose = (f: Fly) =>
+  f.reduce
+    ? { x: 0, y: 0, scale: 1, opacity: 0, transition: { duration: 0.15, ease: 'linear' as const } } // plain fade, no travel
+    : { x: f.dx, y: f.dy, scale: 0.05, opacity: 0, transition: { duration: 0.28, ease: [0.4, 0, 1, 1] as const } };
+
 function Window({
   id,
   title,
@@ -73,20 +92,67 @@ function Window({
 }: WindowProps) {
   const [trafficHovered, setTrafficHovered] = useState(false);
 
-  // An unmount is not always a close (the desktop shell can be swapped for the mobile one, and a
-  // future sprint's minimize will stop unmounting entirely), and the policy and bubble belong to
-  // the app instance that just went away. The manager outlives it, so clear them, or a dead
-  // window's bubble and "are you sure?" guard would come back on the next mount. A normal close
-  // has already reset them, which makes this a no-op.
+  // An unmount is not always a close (the desktop shell is swapped for the mobile one when a
+  // touch device crosses the breakpoint), and the policy and bubble belong to the app instance
+  // that just went away. The manager outlives it, so clear them, or a dead window's bubble and
+  // "are you sure?" guard would come back on the next mount. A normal close has already reset
+  // them, which makes this a no-op. (Minimizing is not an unmount any more: a minimized window
+  // stays mounted.)
   useEffect(() => () => onResetRuntime(id), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sheetUp = closeRequested && !!closeGuard;
+
+  const rndRef = useRef<Rnd>(null);
+  // Where this window flies when minimized, measured at the moment it is minimized (null otherwise).
+  const [fly, setFly] = useState<Fly | null>(null);
+  // The minimize flight has finished, so the window may be visibility:hidden. Starts true for a window
+  // that MOUNTS already minimized (a desktop/mobile shell swap), so it is never visible for a frame.
+  const [settled, setSettled] = useState(isMinimized);
+
+  // Keyed on the isMinimized PROP, not on the yellow button: Minimize All and every other path arrive
+  // here as the same flip. The measurement is the Rnd root's rect, which a transform on its child (the
+  // element being flown) cannot change, so it is valid even mid-flight. Runs before paint, so the extra
+  // render this causes never shows. The cleanup ends the episode (restored or unmounted): a stale
+  // `settled` carried into the next minimize would hide it instantly, with no flight.
+  useLayoutEffect(() => {
+    if (!isMinimized) return;
+    const root = rndRef.current?.getSelfElement();
+    if (!root) return;
+    const r = root.getBoundingClientRect();
+    const { x: dx, y: dy } = translateToward(r, getDockTarget(id));
+    setFly({
+      dx,
+      dy,
+      // Read fresh at every flip: framer's useReducedMotion is a snapshot taken when the component
+      // first renders, and a Window lives for as long as it stays open.
+      reduce: typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    });
+    return () => {
+      setFly(null);
+      setSettled(false);
+    };
+  }, [isMinimized, id]);
+
+  // Memoized so the object identity is stable: onAnimationComplete compares against it to tell the minimize
+  // flight finishing from the enter or restore tweens, which also fire it.
+  const minPose = useMemo(() => (fly ? minimizedPose(fly) : null), [fly]);
+  // The render where the flag has just flipped (nothing measured yet) keeps the old pose, so framer sees
+  // no change; the measured pose arrives in the synchronous re-render, before paint.
+  const target = isMinimized ? (minPose ?? NORMAL) : fly ? restorePose(fly.reduce) : NORMAL;
 
   // What this window's own app can ask about it (see useWindowSelf). Memoized per window, and above
   // the early return below (hooks must not be conditional).
   const self = useMemo(() => ({ id, isMinimized, isFocused }), [id, isMinimized, isFocused]);
 
-  if (!isOpen || isMinimized) return null;
+  if (!isOpen) return null;
+
+  // A minimized window is NOT unmounted: its app keeps its state, requests and iframes, and comes back
+  // exactly as it was. It leaves the interaction tree the instant it is minimized (inert: no focus, no
+  // clicks, no drags, gone from assistive tech), flies into its Dock icon, and only THEN goes
+  // visibility:hidden (not display:none: layout is still measured, and iframes, audio and video keep
+  // running). inert does NOT stop window-level listeners, so apps that have one gate it on
+  // useWindowSelf().isMinimized.
+  const hidden = isMinimized && settled;
 
   // The frame the manager stores for this window. (It is always set once a window is open; the
   // fallback is only for the instant of an exit animation on a window that was never sized.)
@@ -111,10 +177,11 @@ function Window({
 
   return (
     <Rnd
+      ref={rndRef}
       data-window-id={id}
       position={frame.position}
       size={frame.size}
-      disableDragging={isMaximized || isCompact}
+      disableDragging={isMaximized || isCompact || isMinimized}
       enableResizing={!isMaximized && !isCompact}
       // re-resizable writes these as inline min-width/min-height, and CSS min-* beats an
       // explicit width/height -- so a flat 380x300 floor would silently turn the 240x200 bubble
@@ -127,7 +194,16 @@ function Window({
       // focused on top of it (e.g. Canvas/Scheduler opening mid-call). So does a window with its
       // close-confirmation sheet up: the visitor is mid-decision, and a window opened meanwhile
       // (a tool call opening Canvas) must not bury the question, with keyboard focus trapped in it.
-      style={{ zIndex: isCompact || sheetUp ? 9999 : zIndex, position: 'absolute' }}
+      // No inline pointer-events here: react-resizable's own resize handlers overwrite
+      // root.style.pointerEvents directly, and inert already blocks every pointer and focus event
+      // for a minimized window, so it would just be fought and is redundant.
+      style={{
+        zIndex: isCompact || sheetUp ? 9999 : zIndex,
+        position: 'absolute',
+        visibility: hidden ? 'hidden' : undefined,
+      }}
+      inert={isMinimized}
+      aria-hidden={isMinimized || undefined}
       onMouseDown={() => onFocus(id)}
       bounds="parent"
       resizeHandleStyles={{
@@ -175,10 +251,16 @@ function Window({
               : '0 20px 50px rgba(0,0,0,0.45)',
           background: 'transparent',
         }}
-        initial={{ scale: 0.95, opacity: 0, y: 8 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        exit={{ scale: 0.95, opacity: 0, y: 8 }}
+        initial={ENTER_FROM}
+        animate={target}
+        // Closing a window that is minimized (or still flying) must not swell back toward 0.95 on its way out.
+        exit={isMinimized ? { opacity: 0, transition: { duration: 0 } } : EXIT}
         transition={{ duration: 0.18, ease: [0.34, 1.56, 0.64, 1] }}
+        // Also fires for the enter and restore tweens, hence the identity check. A flight that was
+        // interrupted (restored mid-way) never fires it, and `settled` is reset on every flip anyway.
+        onAnimationComplete={(def) => {
+          if (isMinimized && def === minPose) setSettled(true);
+        }}
       >
         {/* ── Title bar — hidden (not removed) in compact mode via `display: none`: the bubble
             look has no title bar/traffic lights, but keeping the element mounted with the same
