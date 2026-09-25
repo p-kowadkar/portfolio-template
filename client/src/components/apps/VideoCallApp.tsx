@@ -54,6 +54,7 @@ import {
 } from 'lucide-react';
 import { CallCapReachedError, API_URL, speak } from '@/lib/callAudio';
 import { checkCallStart, reportCallEnd, GATE_TIMEOUT_MS, CALL_CAP_MS, CAP_MESSAGE, type BlockReason } from '@/lib/callGate';
+import { setCallLive } from '@/lib/callPresence';
 import { useSimliAvatar } from '@/hooks/useSimliAvatar';
 import { usePersistFn } from '@/hooks/usePersistFn';
 import { useCaptions, captionWindow } from '@/hooks/useCaptions';
@@ -140,6 +141,7 @@ export default function VideoCallApp() {
   // true = nothing to report to /api/call/end (no server row exists for this call)
   const endReportedRef = useRef(true);
   const inCall = phase === 'connecting' || phase === 'active';
+  const callOwner = useRef({}).current; // this call view's hold in lib/callPresence.ts
 
   // The bubble is a live-call layout: it only makes sense while connecting or active. Any
   // other phase inside it (ringing, blocked, ended) has no controls that fit, so expand.
@@ -174,6 +176,24 @@ export default function VideoCallApp() {
   useEffect(() => {
     if (!windowOpen && inCall) endCall();
   }, [windowOpen, inCall]);
+
+  // While this view holds callPresence, a resize or rotation cannot swap the desktop shell for the phone
+  // one (that would unmount a live call). The hold is taken at accept and kept through "Call ended" and
+  // the blocked screen, so those survive a rotation too. It is dropped when the view is gone: the window
+  // closed (this component outlives its exit animation), unmounted, or the page put away. NOT on "Call
+  // again": that returns to the same view, and dropping there would let a shell swap that was waiting
+  // out the call happen under the visitor's tap.
+  useEffect(() => {
+    if (!windowOpen) setCallLive(callOwner, false);
+  }, [windowOpen]);
+  useEffect(() => {
+    const release = () => setCallLive(callOwner, false);
+    window.addEventListener('pagehide', release);
+    return () => {
+      window.removeEventListener('pagehide', release);
+      release();
+    };
+  }, []);
 
   // The one shared teardown for the voice pipeline -- every exit path (End, blocked,
   // cap-reached, and unmount) runs through call.teardownVoice() instead of hand-rolling
@@ -290,6 +310,10 @@ export default function VideoCallApp() {
     // avatar's audio play later, now that this is possible (elements always exist).
     avatar.videoRef.current?.play().catch(() => {});
     avatar.audioRef.current?.play().catch(() => {});
+    // From here the call is the visitor's to lose: hold the shell (see the release effects above). Taken
+    // in the click, not an effect, so a resize that lands before the next commit is held too, and right
+    // next to setPhase so nothing can throw between taking the hold and leaving the ringing screen.
+    setCallLive(callOwner, true);
     setPhase('connecting');
     // Rate-gate check races the connecting screen (same clock, fails open at 3s).
     checkCallStart(sessionId).then(result => {
