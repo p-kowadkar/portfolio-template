@@ -8,9 +8,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PhoneOff, Mic, MicOff, Volume2, VolumeX, Send, Loader2, ChevronLeft, Subtitles, MessageSquareText, X } from 'lucide-react';
+import { PhoneOff, Mic, MicOff, Volume2, VolumeX, Send, Loader2, ChevronLeft, Subtitles, MessageSquareText, X, Maximize2 } from 'lucide-react';
 import { CallCapReachedError, API_URL, speak } from '@/lib/callAudio';
-import { checkCallStart, reportCallEnd, GATE_TIMEOUT_MS, type BlockReason } from '@/lib/callGate';
+import { checkCallStart, reportCallEnd, GATE_TIMEOUT_MS, CALL_CAP_MS, CAP_MESSAGE, type BlockReason } from '@/lib/callGate';
+import { setCallLive } from '@/lib/callPresence';
+import { compactBubbleMode } from '@/lib/callBubble';
 import { useSimliAvatar } from '@/hooks/useSimliAvatar';
 import { usePersistFn } from '@/hooks/usePersistFn';
 import { useCaptions, captionWindow } from '@/hooks/useCaptions';
@@ -33,12 +35,33 @@ const ANIME_PORTRAIT = '/data/digital-twin-portrait.png';
 // See VideoCallApp.tsx for the full rationale on these two constants.
 const CONNECT_TIMEOUT_MS = 8000;
 const MIN_CONNECTING_MS = 1100;
+// The bubble's "Call ended" card fades on its own after this, so it never sits over a booking form.
+const BUBBLE_ENDED_CARD_MS = 8000;
 
 type Phase = 'ringing' | 'connecting' | 'active' | 'ended' | 'blocked';
 interface Message { role: 'user' | 'pk'; content: string; ts: number; }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () => void; onOpenApp?: (id: string, params?: Record<string, unknown>) => void }) {
+// onOpenApp: opens another mobile app screen as an overlay ON TOP of this one
+// without unmounting it — wired by MobileShell.tsx to its overlayApp stack (see
+// that file's comment on why: a mid-call tool call must not kill this screen's
+// avatar/audio state just because a canvas or scheduler opened over it).
+export default function MobileDigitalTwin({
+  onClose,
+  onOpenApp,
+  compact,
+  onExpand,
+}: {
+  onClose: () => void;
+  onOpenApp?: (id: string, params?: Record<string, unknown>) => void;
+  // True while Canvas/Scheduler is open on top of this screen (MobileShell's
+  // isCallCompact) — swaps the active-call layout for a small floating bubble
+  // instead of the normal full-screen call UI. onExpand restores it (closes
+  // the overlay via MobileShell's setOverlayApp(null)), same as desktop's
+  // restore button flips isCompact back off.
+  compact?: boolean;
+  onExpand?: () => void;
+}) {
   const [phase, setPhase] = useState<Phase>('ringing');
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -48,9 +71,15 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
   const [soundOn, setSoundOn] = useState(true);
   const [transcript, setTranscript] = useState('');
   const [showTranscript, setShowTranscript] = useState(false);
+  // Compact bubble's own message row — see VideoCallApp.tsx for the rationale.
+  const [compactMessageOpen, setCompactMessageOpen] = useState(false);
   // Call-rate gate — see VideoCallApp.tsx for the full rationale.
   const [gate, setGate] = useState<'pending' | 'allowed' | 'blocked'>('pending');
   const [blockReason, setBlockReason] = useState<BlockReason | null>(null);
+  // The time limit ended this call (the client timer, or a server 429): the ended screens say so.
+  const [endedByCap, setEndedByCap] = useState(false);
+  // The bubble's "Call ended" card was dismissed or faded -- see callBubble.ts.
+  const [bubbleEndedDismissed, setBubbleEndedDismissed] = useState(false);
   const callTimer = useCallTimer(phase === 'active', phase === 'ringing' || phase === 'connecting');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -64,7 +93,11 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
   const connectStartedRef = useRef(0);
   const beganActiveRef = useRef(false);
   const endReportedRef = useRef(true);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
   const inCall = phase === 'connecting' || phase === 'active';
+  const bubble = compactBubbleMode(!!compact, phase, bubbleEndedDismissed);
+  const callOwner = useRef({}).current; // this call view's hold in lib/callPresence.ts
 
   // The one shared teardown for the voice pipeline -- see VideoCallApp.tsx / useCallTeardown.ts.
   const call = useCallTeardown({
@@ -73,6 +106,24 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
     avatarInterrupt: avatar.interrupt,
     onMicOff: () => setMicOn(false),
   });
+
+  // While this view holds callPresence, a rotation or resize cannot swap the phone shell for the desktop
+  // one (that would unmount a live call) -- see VideoCallApp.tsx. Taken at accept, kept through "Call
+  // ended" and the blocked screen, dropped when the view is gone. NOT on "Call again": it returns to the
+  // same view. Back/Close drop it BEFORE onClose, because the unmount only comes after the screen's exit
+  // animation.
+  useEffect(() => {
+    const release = () => setCallLive(callOwner, false);
+    window.addEventListener('pagehide', release);
+    return () => {
+      window.removeEventListener('pagehide', release);
+      release();
+    };
+  }, []);
+  const closeView = () => {
+    setCallLive(callOwner, false);
+    onClose();
+  };
 
   // Real connecting phase — see VideoCallApp.tsx for the full rationale. Waits for
   // the avatar to genuinely come up (or settle as failed) before greeting.
@@ -144,17 +195,22 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
     call.beginCall();
     setGate('pending');
     setBlockReason(null);
+    setEndedByCap(false);
+    setBubbleEndedDismissed(false);
     avatar.prefetchToken(sessionId);
     avatar.start(sessionId);
     avatar.videoRef.current?.play().catch(() => {});
     avatar.audioRef.current?.play().catch(() => {});
+    setCallLive(callOwner, true); // in the click, next to setPhase -- see the hold above
     setPhase('connecting');
     // Rate-gate check races the connecting screen — see VideoCallApp.tsx.
     checkCallStart(sessionId).then(result => {
       if (callSessionIdRef.current !== sessionId) return;
+      if (!call.isLive()) return; // torn down (cancelled, unmounted) while the gate was answering
       if (result.status === 'blocked') {
-        if (!call.isLive()) return; // already torn down (declined, closed) while the gate was answering
+        if (phaseRef.current !== 'connecting' && phaseRef.current !== 'active') return;
         endReportedRef.current = true; // 429 → server inserted no row
+        // See VideoCallApp.tsx: a request and the mic may already be running by now.
         call.teardownVoice();
         setBlockReason(result.reason);
         setGate('blocked');
@@ -182,22 +238,38 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
     }
   });
 
+  // See VideoCallApp.tsx for the full rationale — teardownVoice is the one shared
+  // hang-up, without which a reply already in flight could still speak out loud
+  // after "Call ended" is already on screen. Ending a call never closes the
+  // overlay a bubble sits over: the Scheduler there may hold a half-filled booking
+  // (the bubble's End button sits right next to Expand, and the time limit ends
+  // calls the visitor is not looking at). The bubble turns into a small "Call
+  // ended" card instead (callBubble.ts), and the full ended screen is waiting when
+  // the visitor closes the overlay themselves.
   const endCall = () => {
     call.teardownVoice();
     captions.clearCaption();
+    setCompactMessageOpen(false);
     setPhase('ended');
   };
 
-  // Idempotent — see VideoCallApp.tsx's handleCapReached for the full rationale.
+  // Idempotent -- see VideoCallApp.tsx's handleCapReached for the full rationale.
   const handleCapReached = usePersistFn(() => {
     if (!call.isLive()) return;
-    call.teardownVoice();
+    call.teardownVoice(); // clears the cap timer, so the hangup below is scheduled AFTER it
+    setMessages(prev => [...prev, { role: 'pk', content: CAP_MESSAGE, ts: Date.now() }]);
+    captions.showCaption(CAP_MESSAGE);
+    setEndedByCap(true);
     setSpeaking(false);
-    const capText = "We've hit the time limit for this call — let's keep going over email: pk.kowadkar@gmail.com!";
-    setMessages(prev => [...prev, { role: 'pk', content: capText, ts: Date.now() }]);
-    captions.showCaption(capText);
     call.scheduleCapHangup(endCall, 2500);
   });
+
+  // The bubble's "Call ended" card is a notice, not a dialog: it clears itself.
+  useEffect(() => {
+    if (bubble !== 'ended') return;
+    const t = setTimeout(() => setBubbleEndedDismissed(true), BUBBLE_ENDED_CARD_MS);
+    return () => clearTimeout(t);
+  }, [bubble]);
 
   // Speak a line — Simli avatar first, falling back to the legacy MP3/browser-TTS
   // path (callAudio.ts) if the avatar never came up or died mid-call.
@@ -297,8 +369,31 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
     recognitionRef.current?.stop(); recognitionRef.current = null; setMicOn(false);
   }, []);
 
+  // Compact mode shrinks the whole component's root into a small top-right box
+  // instead of adding a separate small element elsewhere in the tree — the
+  // remote-feed video/portrait layer below is `absolute inset-0` relative to
+  // THIS root, so shrinking the root is what makes the twin's face actually
+  // show up inside the bubble, rather than a small black box floating over a
+  // still-full-screen (now off-screen/covered) video layer.
+  //
+  // Once the call is over the bubble is either the small "Call ended" card or nothing at all (see
+  // callBubble.ts), and in both the overlay underneath must stay usable: the root lets taps through.
+  // The card is the exception: it is opaque, so a tap on it must not reach the booking under it
+  // unseen; it catches the tap and a tap on it dismisses it. Hidden is opacity 0, not display:none,
+  // so the always-mounted remote feed keeps painting.
+  const rootStyle: React.CSSProperties = compact
+    ? {
+        position: 'fixed', top: '52px', right: '12px', width: '150px', height: '190px',
+        borderRadius: '18px', overflow: 'hidden', pointerEvents: bubble === 'active' ? 'auto' : 'none',
+        opacity: bubble === 'hidden' ? 0 : 1,
+        border: '1px solid rgba(255,255,255,0.2)', boxShadow: '0 10px 30px rgba(0,0,0,0.6)',
+        background: '#000', fontFamily: "'Outfit', sans-serif",
+      }
+    : { background: '#000', fontFamily: "'Outfit', sans-serif" };
+
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden" style={{ background: '#000', fontFamily: "'Outfit', sans-serif" }}>
+    <div className={compact ? 'flex flex-col' : 'fixed inset-0 flex flex-col overflow-hidden'} style={rootStyle}
+      aria-hidden={bubble === 'hidden' || undefined} inert={bubble === 'hidden' || undefined}>
 
       {/* ── REMOTE FEED (always mounted) ── see VideoCallApp.tsx for the full rationale:
           Simli's 'start' event needs the <video> actually painted, so it can't be
@@ -308,6 +403,11 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
         <img src={ANIME_PORTRAIT} alt="Pranav" style={{
           width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 10%',
           filter: 'brightness(0.5)',
+          // See VideoCallApp.tsx for the full rationale -- without fading this out
+          // once the video is live, it stays visible behind the video forever in
+          // the letterboxed margins objectFit:'contain' leaves uncovered.
+          opacity: avatar.live ? 0 : 1,
+          transition: 'opacity 0.6s ease',
         }} />
         <video
           ref={avatar.videoRef}
@@ -336,7 +436,7 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
 
       {/* ── RINGING ── */}
       <AnimatePresence>
-        {phase === 'ringing' && (
+        {!compact && phase === 'ringing' && (
           <motion.div
             key="ring"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -351,7 +451,7 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
 
             {/* Back button */}
             <div className="relative z-10 w-full px-4 flex items-center">
-              <button onClick={onClose} aria-label="Back" className="flex items-center gap-1" style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}>
+              <button onClick={closeView} aria-label="Back" className="flex items-center gap-1" style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}>
                 <ChevronLeft size={20} />
                 <span style={{ fontSize: '16px' }}>Back</span>
               </button>
@@ -420,7 +520,7 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
 
       {/* ── CONNECTING ── */}
       <AnimatePresence>
-        {phase === 'connecting' && (
+        {!compact && phase === 'connecting' && (
           <motion.div key="conn" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="absolute inset-0 flex flex-col items-center justify-center gap-5 z-20"
             style={{ background: '#000' }}>
@@ -430,13 +530,79 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
               <img src={ANIME_PORTRAIT} alt="Pranav" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 10%' }} />
             </motion.div>
             <p style={{ fontFamily: "'DM Mono', monospace", fontSize: '11px', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em' }}>CONNECTING...</p>
+            <button onClick={endCall} aria-label="Cancel" style={{
+              marginTop: '2px', padding: '7px 18px', borderRadius: '18px',
+              background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)',
+              color: 'rgba(255,255,255,0.6)', fontSize: '12px', cursor: 'pointer',
+            }}>
+              Cancel
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* ── ACTIVE CALL ── */}
       <AnimatePresence>
-        {phase === 'active' && (
+        {phase === 'active' && (compact ? (
+          <motion.div
+            key="active-compact"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ duration: 0.18 }}
+            className="absolute inset-0 z-10 flex flex-col justify-end"
+          >
+            <div className="absolute top-1.5 left-1.5 flex items-center gap-1" style={{ padding: '2px 6px', borderRadius: '8px', background: 'rgba(0,0,0,0.55)' }}>
+              <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#34c759', flexShrink: 0 }} />
+              <span style={{ fontSize: '8px', color: 'rgba(255,255,255,0.7)' }}>{speaking ? 'speaking' : callTimer}</span>
+            </div>
+
+            <AnimatePresence>
+              {compactMessageOpen && (
+                <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }} className="px-1.5 pb-1">
+                  <div className="flex items-center gap-1 px-2 py-1 rounded-full" style={{ background: 'rgba(255,255,255,0.16)', border: '1px solid rgba(255,255,255,0.15)' }}>
+                    <input
+                      autoFocus
+                      value={input}
+                      onChange={e => setInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && input.trim()) { sendMessage(input); setCompactMessageOpen(false); } }}
+                      placeholder="Message..."
+                      disabled={loading}
+                      style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: '#f0f0f2', fontSize: '10px' }}
+                    />
+                    <button
+                      onClick={() => { if (input.trim()) { sendMessage(input); setCompactMessageOpen(false); } }}
+                      disabled={loading || !input.trim()}
+                      aria-label="Send"
+                      style={{ width: '18px', height: '18px', borderRadius: '50%', border: 'none', flexShrink: 0, background: input.trim() && !loading ? '#E50914' : 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      <Send size={9} color="white" />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <div className="flex items-center justify-center gap-1.5 px-1.5 pb-2 pt-1.5" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%)' }}>
+              <button onClick={() => (micOn ? stopListening() : startListening())} disabled={loading} aria-label={micOn ? 'Stop voice input' : 'Start voice input'}
+                style={{ width: '26px', height: '26px', borderRadius: '50%', border: 'none', flexShrink: 0, background: micOn ? '#ff3b30' : 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {micOn ? <Mic size={12} color="white" /> : <MicOff size={12} color="rgba(255,255,255,0.8)" />}
+              </button>
+              <button onClick={() => setCompactMessageOpen(v => !v)} aria-label="Type a message"
+                style={{ width: '26px', height: '26px', borderRadius: '50%', border: 'none', flexShrink: 0, background: compactMessageOpen ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <MessageSquareText size={12} color="white" />
+              </button>
+              <button onClick={endCall} aria-label="End call"
+                style={{ width: '26px', height: '26px', borderRadius: '50%', border: 'none', flexShrink: 0, background: '#ff3b30', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <PhoneOff size={12} color="white" />
+              </button>
+              <button onClick={() => onExpand?.()} aria-label="Expand call"
+                style={{ width: '26px', height: '26px', borderRadius: '50%', border: 'none', flexShrink: 0, background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Maximize2 size={11} color="white" />
+              </button>
+            </div>
+          </motion.div>
+        ) : (
           <motion.div key="active" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="absolute inset-0 flex flex-col z-10">
 
@@ -475,8 +641,7 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
                 </button>
                 <button onClick={() => setSoundOn(s => !s)} aria-label={soundOn ? 'Mute sound' : 'Unmute sound'} style={{
                   width: '32px', height: '32px', borderRadius: '50%',
-                  background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.15)',
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.15)', cursor: 'pointer',
                 }}>
                   {soundOn ? <Volume2 size={14} color="white" /> : <VolumeX size={14} color="rgba(255,255,255,0.4)" />}
                 </button>
@@ -664,12 +829,37 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
               )}
             </AnimatePresence>
           </motion.div>
+        ))}
+      </AnimatePresence>
+
+      {/* ── ENDED, in the bubble ── the call ended under a Canvas/Scheduler overlay that stays open
+          (see endCall). A notice, so it announces itself without taking focus from the overlay. */}
+      <AnimatePresence>
+        {bubble === 'ended' && (
+          <motion.div key="ended-compact" role="status" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 z-20 px-2 text-center"
+            style={{ background: '#000', pointerEvents: 'auto' }}
+            onClick={() => setBubbleEndedDismissed(true)}>
+            <div className="rounded-full overflow-hidden opacity-40" style={{ width: '34px', height: '34px' }}>
+              <img src={ANIME_PORTRAIT} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 10%' }} />
+            </div>
+            <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: '13px', color: 'rgba(255,255,255,0.7)', fontStyle: 'italic' }}>Call ended</p>
+            {endedByCap && (
+              <p style={{ fontFamily: "'Outfit', sans-serif", fontSize: '9px', lineHeight: 1.35, color: 'rgba(255,255,255,0.45)' }}>
+                Time limit reached — email pk.kowadkar@gmail.com
+              </p>
+            )}
+            <button onClick={() => setBubbleEndedDismissed(true)}
+              style={{ minHeight: '26px', padding: '4px 14px', borderRadius: '13px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)', fontSize: '10px', cursor: 'pointer' }}>
+              Dismiss
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
 
       {/* ── ENDED ── */}
       <AnimatePresence>
-        {phase === 'ended' && (
+        {!compact && phase === 'ended' && (
           <motion.div key="ended" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="absolute inset-0 flex flex-col items-center justify-center gap-6 z-20"
             style={{ background: '#000' }}>
@@ -679,13 +869,18 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
             <div className="text-center">
               <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: '18px', color: 'rgba(255,255,255,0.7)', fontStyle: 'italic' }}>Call ended</p>
               <p style={{ fontFamily: "'DM Mono', monospace", fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginTop: '5px', letterSpacing: '0.05em' }}>{callTimer}</p>
+              {endedByCap && (
+                <p style={{ fontFamily: "'Outfit', sans-serif", fontSize: '13px', color: 'rgba(255,255,255,0.4)', marginTop: '12px', lineHeight: 1.5, maxWidth: '280px' }}>
+                  {CAP_MESSAGE}
+                </p>
+              )}
             </div>
             <div className="flex gap-3">
-              <button onClick={() => { setPhase('ringing'); setMessages([]); }}
+              <button onClick={() => { setPhase('ringing'); setMessages([]); setEndedByCap(false); }}
                 style={{ padding: '9px 20px', borderRadius: '20px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)', fontSize: '13px', cursor: 'pointer' }}>
                 Call again
               </button>
-              <button onClick={onClose}
+              <button onClick={closeView}
                 style={{ padding: '9px 20px', borderRadius: '20px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)', fontSize: '13px', cursor: 'pointer' }}>
                 Close
               </button>
@@ -696,7 +891,7 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
 
       {/* ── BLOCKED (daily limit / monthly budget) ── no "Call again" here. */}
       <AnimatePresence>
-        {phase === 'blocked' && (
+        {!compact && phase === 'blocked' && (
           <motion.div key="blocked" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="absolute inset-0 flex flex-col items-center justify-center gap-6 z-20"
             style={{ background: '#000' }}>
@@ -718,7 +913,7 @@ export default function MobileDigitalTwin({ onClose, onOpenApp }: { onClose: () 
                 style={{ padding: '9px 20px', borderRadius: '20px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)', fontSize: '13px', cursor: 'pointer', textDecoration: 'none' }}>
                 Email Pranav
               </a>
-              <button onClick={onClose}
+              <button onClick={closeView}
                 style={{ padding: '9px 20px', borderRadius: '20px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)', fontSize: '13px', cursor: 'pointer' }}>
                 Close
               </button>

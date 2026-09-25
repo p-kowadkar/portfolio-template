@@ -319,6 +319,8 @@ function AppScreen({
   onClose,
   params,
   onOpenOverlay,
+  compact,
+  onExpand,
   zIndexClassName = 'z-50',
 }: {
   appId: AppId;
@@ -327,6 +329,10 @@ function AppScreen({
   // Only wired to the screens that currently need to open another screen on
   // top of themselves (pai, digitaltwin) — every other case ignores it.
   onOpenOverlay?: (id: string, params?: Record<string, unknown>) => void;
+  // Digital Twin call bubble — see MobileShell's isCallCompact below. Only the
+  // digitaltwin case reads these; every other app ignores them.
+  compact?: boolean;
+  onExpand?: () => void;
   zIndexClassName?: string;
 }) {
   const renderApp = () => {
@@ -338,7 +344,7 @@ function AppScreen({
       case 'terminal': return <MobileTerminal onClose={onClose} />;
       case 'contact': return <MobileContact onClose={onClose} />;
       case 'haiku': return <MobileHaiku onClose={onClose} />;
-      case 'digitaltwin': return <MobileDigitalTwin onClose={onClose} onOpenApp={onOpenOverlay} />;
+      case 'digitaltwin': return <MobileDigitalTwin onClose={onClose} onOpenApp={onOpenOverlay} compact={compact} onExpand={onExpand} />;
       case 'canvas': return <MobileCanvas onClose={onClose} params={params} />;
       case 'scheduler': return <MobileScheduler onClose={onClose} />;
       default: return null;
@@ -348,6 +354,13 @@ function AppScreen({
   return (
     <motion.div
       className={`fixed inset-0 ${zIndexClassName}`}
+      // Compact mode raises this screen's z-index above whatever overlay opened
+      // on top of it (see isCallCompact below) so the bubble stays visible — but
+      // this wrapper still spans the full viewport. Without pointer-events:none
+      // here, that invisible full-screen div would swallow every tap on the
+      // overlay behind it, everywhere except the small bubble itself. The
+      // bubble re-enables pointer-events on its own root to stay tappable.
+      style={{ pointerEvents: compact ? 'none' : 'auto' }}
       initial={{ y: '100%', opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: '100%', opacity: 0 }}
@@ -371,6 +384,12 @@ export default function MobileShell() {
   // keeps running behind it"; a real stack would be a bigger rework of
   // activeApp's single-AppId model.
   const [overlayApp, setOverlayApp] = useState<{ id: AppId; params?: Record<string, unknown> } | null>(null);
+  // The call bubble trigger: only canvas/scheduler shrink the twin, matching
+  // desktop's VideoCallApp.tsx scoping — open_app (Projects/résumé/etc.) reads
+  // more like "go look at this yourself" than "keep narrating while I show you
+  // something", so it stays a plain full-screen overlay swap. Derived, not its
+  // own state, since overlayApp.id already tells us which tool call fired it.
+  const isCallCompact = activeApp === 'digitaltwin' && (overlayApp?.id === 'canvas' || overlayApp?.id === 'scheduler');
   const [notifOpen, setNotifOpen] = useState(false);
   const [paiOpened, setPaiOpened] = useState(false);
   const [showSwipeHint, setShowSwipeHint] = useState(true);
@@ -550,6 +569,9 @@ export default function MobileShell() {
             params={activeAppParams}
             onClose={() => setActiveApp(null)}
             onOpenOverlay={openOverlayApp}
+            compact={isCallCompact}
+            onExpand={() => setOverlayApp(null)}
+            zIndexClassName={isCallCompact ? 'z-[70]' : undefined}
           />
         )}
       </AnimatePresence>
