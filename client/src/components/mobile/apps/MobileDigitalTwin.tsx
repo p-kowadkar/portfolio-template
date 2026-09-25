@@ -193,6 +193,7 @@ export default function MobileDigitalTwin({
     endReportedRef.current = false;
     connectStartedRef.current = Date.now();
     call.beginCall();
+    call.scheduleCapHangup(handleCapReached, CALL_CAP_MS); // cleared by every teardown path
     setGate('pending');
     setBlockReason(null);
     setEndedByCap(false);
@@ -263,6 +264,18 @@ export default function MobileDigitalTwin({
     setSpeaking(false);
     call.scheduleCapHangup(endCall, 2500);
   });
+
+  // The 10-minute timer is a plain setTimeout, and a phone can suspend those while the page is in the
+  // background, so it can fire late or not until the visitor returns. Check the wall clock on coming back.
+  // handleCapReached is idempotent, so this and the timer can both land.
+  useEffect(() => {
+    if (!inCall) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - connectStartedRef.current >= CALL_CAP_MS) handleCapReached();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [inCall]);
 
   // The bubble's "Call ended" card is a notice, not a dialog: it clears itself.
   useEffect(() => {
