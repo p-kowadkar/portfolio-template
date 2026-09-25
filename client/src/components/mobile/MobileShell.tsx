@@ -16,6 +16,8 @@ import MobileCanvas from './apps/MobileCanvas';
 import MobileScheduler from './apps/MobileScheduler';
 import NotificationCenter from './NotificationCenter';
 import LockScreen, { useIdleLock } from './LockScreen';
+import { useCallLive } from '../../hooks/useCallLive';
+import { idleTimerBlind } from '../../lib/idleBlind';
 
 // ── Wallpaper (same CDN as desktop) ─────────────────────────────────────────
 const WALLPAPER = 'https://files.manuscdn.com/user_upload_by_module/session_file/115134064/HlEzSRgFAgrgshVP.png';
@@ -393,7 +395,9 @@ export default function MobileShell() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [paiOpened, setPaiOpened] = useState(false);
   const [showSwipeHint, setShowSwipeHint] = useState(true);
-  const { locked, unlock } = useIdleLock(60_000);
+  // Paused while a call is on screen, and while an iframe app (Scheduler, Resume) is: touches inside an
+  // iframe never reach the timer, so it would lock the screen over someone who is busy in it.
+  const { locked, unlock } = useIdleLock(60_000, useCallLive() || idleTimerBlind(activeApp, overlayApp?.id));
   const touchStartY = useRef(0);
   const touchStartTime = useRef(0);
 

@@ -143,10 +143,18 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
 }
 
 // ── Idle detector hook ────────────────────────────────────────────────────────
-export function useIdleLock(timeout = IDLE_TIMEOUT) {
+// `paused` (a call is on screen) means nothing counts down and nothing can be locked. A voice call makes
+// none of the taps this listens for, so left running the lock would cover a call the visitor is talking
+// to and hide End. Un-pausing runs the effect again, whose first reset() starts a fresh full timeout, so
+// the lock never slams down the instant a call is over.
+export function useIdleLock(timeout = IDLE_TIMEOUT, paused = false) {
   const [locked, setLocked] = useState(false);
 
   useEffect(() => {
+    if (paused) {
+      setLocked(false); // a lock already showing must not come back the moment this un-pauses
+      return;
+    }
     let timer: ReturnType<typeof setTimeout>;
 
     const reset = () => {
@@ -162,10 +170,10 @@ export function useIdleLock(timeout = IDLE_TIMEOUT) {
       clearTimeout(timer);
       events.forEach((e) => window.removeEventListener(e, reset));
     };
-  }, [timeout]);
+  }, [timeout, paused]);
 
   const unlock = useCallback(() => setLocked(false), []);
-  return { locked, unlock };
+  return { locked: locked && !paused, unlock };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
