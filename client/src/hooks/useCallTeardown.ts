@@ -9,9 +9,10 @@
  * final result that started a brand-new turn. Every exit path now runs
  * teardownVoice(), including unmount.
  *
- * It only owns the VOICE pipeline. The avatar connection (avatar.stop()) and the
- * /api/call/end accounting beacon stay with the component's own [inCall] effect,
- * which already fires exactly once across every exit path.
+ * It only owns the VOICE pipeline (and the screen wake lock that keeps a phone from locking mid-call:
+ * taken in beginCall, given back in teardownVoice, so every exit path releases it too). The avatar
+ * connection (avatar.stop()) and the /api/call/end accounting beacon stay with the component's own
+ * [inCall] effect, which already fires exactly once across every exit path.
  *
  * ─── Usage contract ─────────────────────────────────────────────────────────
  *   const call = useCallTeardown({
@@ -44,6 +45,7 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { usePersistFn } from './usePersistFn';
 import { cancelFallbackSpeech } from '@/lib/callAudio';
+import { createScreenWakeHolder, type ScreenWakeHolder, type WakeLockLike } from '@/lib/wakeLock';
 import type { SpeechRecognitionType } from '@/lib/speechRecognition';
 
 export interface CallTeardownParts {
@@ -67,6 +69,13 @@ export interface CallTeardown {
 export function useCallTeardown(parts: CallTeardownParts): CallTeardown {
   const liveRef = useRef(false);
   const capTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Created on first use so nothing touches navigator/document at import or first render.
+  const wakeRef = useRef<ScreenWakeHolder | null>(null);
+  const wake = () =>
+    (wakeRef.current ??= createScreenWakeHolder(
+      () => (typeof navigator === 'undefined' ? undefined : (navigator as unknown as { wakeLock?: WakeLockLike }).wakeLock),
+      document,
+    ));
 
   const clearCapTimer = () => {
     if (capTimerRef.current) {
@@ -78,6 +87,7 @@ export function useCallTeardown(parts: CallTeardownParts): CallTeardown {
   const beginCall = usePersistFn(() => {
     clearCapTimer();
     liveRef.current = true;
+    wake().acquire(); // inside the Accept click; a no-op where the API is missing or the page is not HTTPS
   });
 
   const isLive = usePersistFn(() => liveRef.current);
@@ -85,6 +95,7 @@ export function useCallTeardown(parts: CallTeardownParts): CallTeardown {
   const teardownVoice = usePersistFn(() => {
     liveRef.current = false;
     clearCapTimer();
+    wakeRef.current?.release(); // idempotent: End, cap, blocked, and unmount all land here
 
     // Network: stop the in-flight /api/chat request.
     parts.chatAbortRef.current?.abort();
